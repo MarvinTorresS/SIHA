@@ -1,0 +1,25 @@
+# requirements.txt — ETL Módulo — Sistema de Horarios UNA Campus Coto
+#
+# Instalar con: pip install -r requirements.txt
+#
+# Versiones fijadas para reproducibilidad. Actualizar con pip-compile
+# antes de pasar a producción.
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+requests==2.32.3          # Cliente HTTP para malla_scraper y banner_connector
+httpx==0.27.0             # Alternativa async (útil si Banner requiere concurrencia)
+
+# ── HTML Parsing ──────────────────────────────────────────────────────────────
+beautifulsoup4==4.12.3    # Parser del HTML de botsrb.info
+lxml==5.2.2               # Parser C más rápido que html.parser (backend de BS4)
+
+# ── Base de Datos (Sprint 3) ──────────────────────────────────────────────────
+psycopg2-binary==2.9.9    # Driver PostgreSQL — usar psycopg2 (sin -binary) en producción
+
+# ── Utilidades ────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1      # Cargar .env con credenciales de BD (nunca hardcodear)
+tenacity==8.3.0           # Reintentos con backoff (alternativa más robusta al manual)
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.2.2
+pytest-cov==5.0.0         # Reporte de cobertura de código

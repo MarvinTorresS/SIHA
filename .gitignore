@@ -1,0 +1,59 @@
+# ============================================
+# SIHA - Sistema de Itinerarios y Horarios Académicos
+# ============================================
+
+# --- Python (data-extractor/) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+*.log
+
+# --- Node.js / TypeScript (api/, Sistema-web/) ---
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Prisma ---
+generated/
+
+# --- Variables de entorno y credenciales (NUNCA subir) ---
+.env
+.env.local
+.env.*.local
+*.env
+
+# --- Docker ---
+pgdata/
+postgres-data/
+
+# --- Datos crudos institucionales (Banner, mallas) ---
+# Contienen datos de profesores (nombre, correo) y son regenerables
+# corriendo malla_scraper.py / banner_connector.py -- no se versionan.
+data-extractor/output/raw/*.json
+data-extractor/output/**/*.json
+
+# --- Reportes generados ---
+orphaned_records.csv
+
+# --- IDEs y editores ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+desktop.ini

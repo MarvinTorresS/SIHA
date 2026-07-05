@@ -315,27 +315,43 @@ class BannerSession:
         )
 
     def search(self, code: str) -> list[dict]:
-        r = self._request(
-            "GET", f"{BANNER_BASE}/searchResults/searchResults",
-            params={
-                "txt_subjectcoursecombo": code,
-                "txt_term":      TERM_CODE,
-                "pageOffset":    0,
-                "pageMaxSize":   50,
-                "sortColumn":    "subjectDescription",
-                "sortDirection": "asc",
-                "uniqueSessionId": self._uid,
-                "_": int(time.time() * 1000),
-            },
-            headers={
-                "x-synchronizer-token": self._token,
-                "x-requested-with":     "XMLHttpRequest",
-                "accept": "application/json, text/javascript, */*; q=0.01",
-                "referer": f"{BANNER_BASE}/courseSearch/courseSearch",
-            },
-        )
-        data = r.json()
-        return (data.get("data") or []) if data.get("success") else []
+            all_data = []
+            page_offset = 0
+            page_max_size = 200 
+
+            while True:
+                r = self._request(
+                    "GET", f"{BANNER_BASE}/searchResults/searchResults",
+                    params={
+                        "txt_subjectcoursecombo": code,
+                        "txt_term":      TERM_CODE,
+                        "pageOffset":    page_offset,
+                        "pageMaxSize":   page_max_size,
+                        "sortColumn":    "subjectDescription",
+                        "sortDirection": "asc",
+                        "uniqueSessionId": self._uid,
+                        "_": int(time.time() * 1000),
+                    },
+                    headers={
+                        "x-synchronizer-token": self._token,
+                        "x-requested-with":     "XMLHttpRequest",
+                        "accept": "application/json, text/javascript, */*; q=0.01",
+                        "referer": f"{BANNER_BASE}/courseSearch/courseSearch",
+                    },
+                )
+                data = r.json()
+                if not data.get("success"):
+                    break
+
+                page_data = data.get("data") or []
+                all_data.extend(page_data)
+
+                total_count = data.get("totalCount", 0)
+                page_offset += page_max_size
+                if page_offset >= total_count:
+                    break
+
+            return all_data
 
     def get_restrictions(self, crn: str) -> str:
         """

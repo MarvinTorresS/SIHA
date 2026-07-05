@@ -13,6 +13,7 @@ Flujo:
   8. RESOLVER créditos en 0 en curso usando datos de Banner
   9. MERGE: UPDATE seccion.curso_id = curso.id_curso
      JOIN por codigo_curso_banner = curso.codigo
+     Prioriza el match con la carrera indicada por banner_program.
   10. REPORTE: tasa de join, huérfanos, créditos en 0
 
 Ejecución:
@@ -265,10 +266,13 @@ def _insert_prerequisites(conn, course_map: dict[str, int]):
 # PASO 4-6: Secciones, profesores y horarios desde Banner
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _insert_sections_from_banner(conn, period_id: int) -> dict[str, list[int]]:
+def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int]) -> dict[str, list[int]]:
     """
     Inserta secciones, profesores y horarios desde los archivos banner_*.json.
     Retorna {codigo_curso_banner: [id_seccion, ...]} para el MERGE.
+
+    Los archivos banner_*.json usan campos en inglés (crn, course, title, etc.)
+    desde la actualización del banner_connector (jul/2026).
     """
     files = list(OUTPUT_RAW_DIR.glob("banner_*_202620.json"))
     if not files:
@@ -288,7 +292,7 @@ def _insert_sections_from_banner(conn, period_id: int) -> dict[str, list[int]]:
         for sec in all_sections:
             # ── Profesor ──────────────────────────────────────────────────
             teacher_id = None
-            teacher_name = (sec.get("profesor") or "").strip()
+            teacher_name = (sec.get("instructor") or "").strip()
             teacher_email = None
             if teacher_name:
                 cur.execute(
@@ -303,19 +307,14 @@ def _insert_sections_from_banner(conn, period_id: int) -> dict[str, list[int]]:
                 teacher_id = cur.fetchone()[0]
 
             # ── Créditos ──────────────────────────────────────────────────
-            credits = _parse_credits(sec.get("creditos", 0))
+            credits = _parse_credits(sec.get("credits", 0))
 
             # ── Fechas ────────────────────────────────────────────────────
-            start_date = _parse_date(sec.get("fecha_inicio"))
-            end_date = _parse_date(sec.get("fecha_fin"))
+            start_date = _parse_date(sec.get("start_date"))
+            end_date = _parse_date(sec.get("end_date"))
 
             # ── Metadata ──────────────────────────────────────────────────
-            metadata = {
-                k: v for k, v in sec.items()
-                if k not in ("nrc", "curso", "titulo", "creditos", "campus", "tipo",
-                             "seccion", "capacidad", "inscritos", "disponibles",
-                             "profesor", "horarios", "fecha_inicio", "fecha_fin", "es_general")
-            }
+            metadata = sec.get("metadata") or {}
 
             # ── Sección ───────────────────────────────────────────────────
             cur.execute(
@@ -336,24 +335,24 @@ def _insert_sections_from_banner(conn, period_id: int) -> dict[str, list[int]]:
                 RETURNING id_seccion
                 """,
                 (
-                    sec["nrc"], sec["curso"], period_id, teacher_id,
-                    sec.get("seccion", ""), sec.get("titulo", ""),
-                    sec.get("tipo", ""), sec.get("campus", ""),
+                    sec["crn"], sec["course"], period_id, teacher_id,
+                    sec.get("section", ""), sec.get("title", ""),
+                    sec.get("type", ""), sec.get("campus", ""),
                     credits,
-                    sec.get("capacidad", 0), sec.get("inscritos", 0),
-                    sec.get("disponibles", 0),
-                    sec.get("es_general", False),
+                    sec.get("capacity", 0), sec.get("enrolled", 0),
+                    sec.get("available", 0),
+                    sec.get("is_general", False),
                     start_date, end_date,
                     json.dumps(metadata),
                 ),
             )
             section_id = cur.fetchone()[0]
-            sections_by_code[sec["curso"]].append(section_id)
+            sections_by_code[sec["course"]].append(section_id)
 
             # ── Horarios ──────────────────────────────────────────────────
-            for h in sec.get("horarios", []):
-                start_time = _parse_time(h.get("inicio"))
-                end_time = _parse_time(h.get("fin"))
+            for h in sec.get("schedules", []):
+                start_time = _parse_time(h.get("start"))
+                end_time = _parse_time(h.get("end"))
                 if start_time and end_time:
                     cur.execute(
                         """
@@ -361,7 +360,7 @@ def _insert_sections_from_banner(conn, period_id: int) -> dict[str, list[int]]:
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT DO NOTHING
                         """,
-                        (section_id, h.get("dia", ""), start_time, end_time, h.get("aula", "")),
+                        (section_id, h.get("day", ""), start_time, end_time, h.get("classroom", "")),
                     )
 
     return dict(sections_by_code)
@@ -464,9 +463,45 @@ def _resolve_zero_credits_from_banner(conn):
 # PASO 9: MERGE Banner ↔ Malla
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _merge_banner_syllabus(conn, course_map: dict[str, int]):
-    """Actualiza seccion.curso_id haciendo JOIN por codigo_curso_banner = curso.codigo."""
+def _merge_banner_syllabus(conn, course_map: dict[str, int], career_map: dict[str, int]):
+    """
+    Actualiza seccion.id_curso haciendo JOIN por codigo_curso_banner = curso.codigo.
+
+    Para cursos compartidos entre carreras (ej. MAT002), prioriza el match
+    con el curso que pertenece a la carrera indicada por metadata->>'banner_program'.
+    Si no hay banner_program o el curso no existe para esa carrera, usa
+    cualquier match (el primer curso con ese código).
+    """
+    # Mapa inverso: id_carrera → sigla
+    id_to_sigla = {v: k for k, v in career_map.items()}
+
     with conn.cursor() as cur:
+        # Paso 1: Match con prioridad de carrera (banner_program coincide
+        # con la carrera del curso en la malla)
+        cur.execute(
+            """
+            UPDATE seccion s
+            SET id_curso = c.id_curso,
+                es_general = c.es_general,
+                creditos = CASE WHEN c.creditos > 0 THEN c.creditos ELSE s.creditos END,
+                actualizado_en = now()
+            FROM curso c
+            WHERE s.codigo_curso_banner = c.codigo
+              AND s.id_curso IS NULL
+              AND (
+                  s.metadata->>'banner_program' IS NULL
+                  OR c.id_carrera = (
+                      SELECT ca.id_carrera FROM carrera ca
+                      WHERE ca.sigla = s.metadata->>'banner_program'
+                  )
+              )
+            """
+        )
+        matched_with_program = cur.rowcount
+
+        # Paso 2: Match sin prioridad (para las secciones que quedaron
+        # huérfanas después del paso 1 — ej. banner_program no matcheó
+        # con ninguna carrera en curso, o banner_program es null)
         cur.execute(
             """
             UPDATE seccion s
@@ -479,8 +514,12 @@ def _merge_banner_syllabus(conn, course_map: dict[str, int]):
               AND s.id_curso IS NULL
             """
         )
-        matched = cur.rowcount
-    log.info(f"  ✓ MERGE: {matched} secciones matcheadas con la malla")
+        matched_fallback = cur.rowcount
+
+    total_matched = matched_with_program + matched_fallback
+    log.info(f"  ✓ MERGE: {total_matched} secciones matcheadas "
+             f"({matched_with_program} con prioridad de carrera, "
+             f"{matched_fallback} fallback)")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -513,6 +552,19 @@ def _quality_report(conn):
         )
         resolved = cur.fetchone()["resolved"]
 
+        # Estadísticas de banner_program
+        cur.execute(
+            """
+            SELECT
+                s.metadata->>'banner_program' AS program,
+                count(*) AS sections
+            FROM seccion s
+            GROUP BY s.metadata->>'banner_program'
+            ORDER BY count(*) DESC
+            """
+        )
+        program_stats = cur.fetchall()
+
         log.info(f"\n{'='*50}")
         log.info(f"QUALITY REPORT — Sprint 3")
         log.info(f"{'='*50}")
@@ -522,6 +574,10 @@ def _quality_report(conn):
         log.info(f"  Courses with credits=0 (unresolved): {zero_credits}")
         log.info(f"  Courses resolved via Banner:         {resolved}")
         log.info(f"  Join rate:             {rate:.1f}% {'✓' if rate >= 95 else '⚠'}")
+        log.info(f"  Sections by banner_program:")
+        for row in program_stats:
+            prog = row["program"] or "null"
+            log.info(f"    {prog}: {row['sections']}")
 
         if orphans > 0:
             cur.execute(
@@ -571,7 +627,7 @@ def run():
 
         # 4-6. Secciones desde Banner
         log.info("\n▶ Inserting sections from Banner...")
-        _insert_sections_from_banner(conn, period_id)
+        _insert_sections_from_banner(conn, period_id, career_map)
 
         # 7. Cursos de generales desde Banner (automático)
         log.info("\n▶ Inserting general courses from Banner...")
@@ -587,9 +643,9 @@ def run():
             course_map = {row[0]: row[1] for row in cur.fetchall()}
         log.info(f"  Total courses in DB: {len(course_map)}")
 
-        # 9. MERGE
+        # 9. MERGE (ahora con prioridad de carrera via banner_program)
         log.info("\n▶ Merging Banner ↔ Syllabus...")
-        _merge_banner_syllabus(conn, course_map)
+        _merge_banner_syllabus(conn, course_map, career_map)
 
         # 10. Reporte
         _quality_report(conn)

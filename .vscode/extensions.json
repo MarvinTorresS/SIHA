@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "Prisma.prisma",
+    "esbenp.prettier-vscode"
+  ]
+}

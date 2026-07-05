@@ -24,9 +24,9 @@ MALLA_SYLLABUS_PATH = "/syllabus"
 # Clave: sigla usada en la URL. Valor: nombre legible para logs.
 # Ampliar esta lista cuando se agreguen carreras al campus.
 CARRERAS_CAMPUS_COTO: dict[str, str] = {
-   "isi":     "Ingeniería en Sistemas Informáticos",
-    "itecad":  "Ingeniería en Ciencia de Datos",
-    "topo":    "Topografía",
+    "isi":    "Ingeniería en Sistemas Informáticos",
+    "itecad": "Ingeniería en Ciencia de Datos",
+    "topo":   "Topografía",
 }
 
 # ── Banner (catálogo de cursos UNA) ──────────────────────────────────────────
@@ -35,6 +35,7 @@ BANNER_BASE_URL = "https://studentssb.una.ac.cr"
 # Endpoints documentados en el análisis de fuentes
 BANNER_SEARCH_RESULTS_PATH   = "/StudentRegistrationSsb/ssb/searchResults/searchResults"
 BANNER_CLASS_DETAILS_PATH    = "/StudentRegistrationSsb/ssb/searchResults/getClassDetails"
+BANNER_RESTRICTIONS_PATH     = "/StudentRegistrationSsb/ssb/searchResults/getRestrictions"
 
 # Ciclo académico activo. Formato: YYYYNN donde NN es el número de ciclo.
 # Actualizar antes de cada nuevo período de matrícula.
@@ -42,6 +43,25 @@ CICLO_ACTIVO = "202620"
 
 # Texto exacto usado para filtrar secciones del Campus Coto en Banner
 CAMPUS_COTO_FILTER_TEXT = "SRB: Campus Coto"
+
+# ── Mapeo Banner → carrera interna ───────────────────────────────────────────
+# Códigos de programa de Banner (extraídos del HTML de getRestrictions,
+# confirmados manualmente inspeccionando el modal "Restricciones") mapeados
+# a la sigla interna de carrera usada en todo el sistema.
+#
+#   BA-INFORM   → Bach Ing. Sistemas Información        → isi
+#   BA-TOPOGR   → Bach Topografía y Catastro             → topo
+#   BA-TECOMCD  → Ba. Ing Tec Comp Ciencia Datos         → itecad
+#
+# Confirmado (04/jul/2026): TODAS las secciones traen el bloque de
+# programas en getRestrictions, no solo las compartidas — por lo tanto
+# es una fuente confiable para validar/asignar carrera, no solo un
+# parche para casos ambiguos como MAT.
+BANNER_PROGRAM_TO_CARRERA: dict[str, str] = {
+    "BA-INFORM":  "isi",
+    "BA-TOPOGR":  "topo",
+    "BA-TECOMCD": "itecad",
+}
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
 # Cabeceras comunes para simular un navegador real y evitar bloqueos básicos.

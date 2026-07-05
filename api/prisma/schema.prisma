@@ -1,0 +1,123 @@
+generator client {
+  provider        = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model carrera {
+  id_carrera Int      @id @default(autoincrement())
+  sigla      String   @unique @db.VarChar(10)
+  nombre     String   @db.VarChar(150)
+  campus     String   @default("Campus Coto") @db.VarChar(50)
+  creado_en  DateTime @default(now()) @db.Timestamptz(6)
+  curso      curso[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model curso {
+  id_curso         Int              @id @default(autoincrement())
+  codigo           String           @unique @db.VarChar(20)
+  nombre           String           @db.VarChar(200)
+  creditos         Decimal          @default(0) @db.Decimal(3, 1)
+  id_carrera       Int?
+  es_general       Boolean          @default(false)
+  creditos_fuente  String           @default("malla") @db.VarChar(20)
+  creado_en        DateTime         @default(now()) @db.Timestamptz(6)
+  actualizado_en   DateTime         @default(now()) @db.Timestamptz(6)
+  ciclo_id         String           @default("") @db.VarChar(10)
+  ciclo_nombre     String           @default("") @db.VarChar(50)
+  es_optativo      Boolean          @default(false)
+  carrera          carrera?         @relation(fields: [id_carrera], references: [id_carrera], onDelete: Restrict, onUpdate: NoAction)
+  requisitosDe     prerrequisito[]  @relation("prerrequisito_id_cursoTocurso")
+  esRequisitoDe    prerrequisito[]  @relation("prerrequisito_id_curso_requeridoTocurso")
+  seccion          seccion[]
+
+  @@index([id_carrera], map: "ix_curso_carrera")
+  @@index([codigo], map: "ix_curso_codigo")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model horario_bloque {
+  id_horario_bloque Int      @id @default(autoincrement())
+  id_seccion        Int
+  dia               String   @db.VarChar(15)
+  hora_inicio       DateTime @db.Time(6)
+  hora_fin          DateTime @db.Time(6)
+  aula              String   @default("") @db.VarChar(50)
+  seccion           seccion  @relation(fields: [id_seccion], references: [id_seccion], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([dia, hora_inicio, hora_fin], map: "ix_horario_bloque_dia_horas")
+  @@index([id_seccion], map: "ix_horario_bloque_seccion")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model periodo {
+  id_periodo Int       @id @default(autoincrement())
+  codigo     String    @unique @db.VarChar(10)
+  nombre     String    @db.VarChar(50)
+  anio       Int       @db.SmallInt
+  ciclo      Int       @db.SmallInt
+  activo     Boolean   @default(true)
+  creado_en  DateTime  @default(now()) @db.Timestamptz(6)
+  seccion    seccion[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model prerrequisito {
+  id_prerrequisito  Int   @id @default(autoincrement())
+  id_curso          Int
+  id_curso_requerido Int
+  curso             curso @relation("prerrequisito_id_cursoTocurso", fields: [id_curso], references: [id_curso], onDelete: Cascade, onUpdate: NoAction)
+  cursoRequerido    curso @relation("prerrequisito_id_curso_requeridoTocurso", fields: [id_curso_requerido], references: [id_curso], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([id_curso, id_curso_requerido], map: "uq_prerrequisito")
+  @@index([id_curso], map: "ix_prerrequisito_curso")
+  @@index([id_curso_requerido], map: "ix_prerrequisito_requerido")
+}
+
+model profesor {
+  id_profesor Int       @id @default(autoincrement())
+  nombre      String    @unique(map: "uq_profesor_nombre") @db.VarChar(200)
+  correo      String?   @db.VarChar(150)
+  creado_en   DateTime  @default(now()) @db.Timestamptz(6)
+  seccion     seccion[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model seccion {
+  id_seccion          Int              @id @default(autoincrement())
+  nrc                 String           @db.VarChar(10)
+  id_curso            Int?
+  codigo_curso_banner String           @db.VarChar(20)
+  id_periodo          Int
+  id_profesor         Int?
+  numero_seccion      String           @default("") @db.VarChar(10)
+  titulo              String           @default("") @db.VarChar(200)
+  tipo                String           @default("") @db.VarChar(50)
+  campus              String           @default("Campus Coto") @db.VarChar(50)
+  creditos            Decimal          @default(0) @db.Decimal(3, 1)
+  capacidad           Int              @default(0) @db.SmallInt
+  inscritos           Int              @default(0) @db.SmallInt
+  disponibles         Int              @default(0) @db.SmallInt
+  es_general          Boolean          @default(false)
+  fecha_inicio        DateTime?        @db.Date
+  fecha_fin           DateTime?        @db.Date
+  creado_en           DateTime         @default(now()) @db.Timestamptz(6)
+  actualizado_en      DateTime         @default(now()) @db.Timestamptz(6)
+  metadata            Json             @default("{}")
+  horario_bloque      horario_bloque[]
+  curso               curso?           @relation(fields: [id_curso], references: [id_curso], onUpdate: NoAction)
+  periodo             periodo          @relation(fields: [id_periodo], references: [id_periodo], onUpdate: NoAction)
+  profesor            profesor?        @relation(fields: [id_profesor], references: [id_profesor], onUpdate: NoAction)
+
+  @@unique([nrc, id_periodo], map: "uq_seccion_nrc_periodo")
+  @@index([codigo_curso_banner], map: "ix_seccion_codigo_banner")
+  @@index([id_curso], map: "ix_seccion_curso")
+  @@index([id_periodo], map: "ix_seccion_periodo")
+  @@index([id_profesor], map: "ix_seccion_profesor")
+}

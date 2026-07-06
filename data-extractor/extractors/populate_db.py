@@ -349,20 +349,29 @@ def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int
             section_id = cur.fetchone()[0]
             sections_by_code[sec["course"]].append(section_id)
 
-            # ── Horarios ──────────────────────────────────────────────────
+                       # ── Horarios ──────────────────────────────────────────────────
+            # Deduplicar en memoria antes de insertar. No podemos confiar en
+            # ON CONFLICT porque horario_bloque no tiene restricción UNIQUE
+            # sobre (id_seccion, dia, hora_inicio, hora_fin). Usamos un Set
+            # de tuplas para filtrar duplicados dentro de esta corrida.
+            seen_blocks = set()
             for h in sec.get("schedules", []):
                 start_time = _parse_time(h.get("start"))
                 end_time = _parse_time(h.get("end"))
                 if start_time and end_time:
-                    cur.execute(
-                        """
-                        INSERT INTO horario_bloque (id_seccion, dia, hora_inicio, hora_fin, aula)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT DO NOTHING
-                        """,
-                        (section_id, h.get("day", ""), start_time, end_time, h.get("classroom", "")),
-                    )
-
+                    day = h.get("day", "")
+                    classroom = h.get("classroom", "")
+                    key = (section_id, day, start_time, end_time, classroom)
+                    if key not in seen_blocks:
+                        seen_blocks.add(key)
+                        cur.execute(
+                            """
+                            INSERT INTO horario_bloque (id_seccion, dia, hora_inicio, hora_fin, aula)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                            """,
+                            (section_id, day, start_time, end_time, classroom),
+                        )
     return dict(sections_by_code)
 
 

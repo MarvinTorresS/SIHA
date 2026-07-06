@@ -4,8 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-     "test": "vitest run",
-     "test:watch": "vitest"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,9 +20,10 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.0",
+    "@types/supertest": "^7.2.0",
+    "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
-    
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   }
-  
 }

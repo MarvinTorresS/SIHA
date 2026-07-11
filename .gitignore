@@ -53,6 +53,12 @@ orphaned_records.csv
 *.swp
 *.swo
 
+# --- Configuracion local de Claude Code (permisos/preferencias personales) ---
+# NO ignorar .claude/skills/ ni CLAUDE.md/PRODUCT.md/DESIGN.md: esos documentan
+# convenciones del proyecto y deben seguir versionados.
+.claude/settings.local.json
+.claude/*.local.json
+
 # --- Sistema operativo ---
 .DS_Store
 Thumbs.db

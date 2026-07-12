@@ -16,17 +16,20 @@ LOGS_DIR             = BASE_DIR / "logs"
 for _dir in (OUTPUT_RAW_DIR, OUTPUT_NORMALIZED_DIR, LOGS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
-# ── Malla curricular (botsrb.info) ───────────────────────────────────────────
-MALLA_BASE_URL = "https://botsrb.info"
-MALLA_SYLLABUS_PATH = "/syllabus"
-
 # Carreras del Campus Coto a procesar.
-# Clave: sigla usada en la URL. Valor: nombre legible para logs.
+# Clave: sigla interna. Valor: nombre legible para logs.
+# isi/itecad/topo: sigla usada originalmente en la URL de botsrb.info
+# (malla_scraper.py, eliminado — ver nota arriba).
+# ingles/adm: agregadas para excel_loader.py (PLANES_DE_ESTUDIO.xlsx) — no
+# tienen equivalente en botsrb.info porque nunca se scrapearon; la sigla es
+# arbitraria, elegida solo por consistencia de estilo con las demás.
 # Ampliar esta lista cuando se agreguen carreras al campus.
 CARRERAS_CAMPUS_COTO: dict[str, str] = {
     "isi":    "Ingeniería en Sistemas Informáticos",
     "itecad": "Ingeniería en Ciencia de Datos",
     "topo":   "Topografía",
+    "ingles": "Enseñanza del Inglés",
+    "adm":    "Administración",
 }
 
 # ── Banner (catálogo de cursos UNA) ──────────────────────────────────────────
@@ -57,6 +60,13 @@ CAMPUS_COTO_FILTER_TEXT = "SRB: Campus Coto"
 # programas en getRestrictions, no solo las compartidas — por lo tanto
 # es una fuente confiable para validar/asignar carrera, no solo un
 # parche para casos ambiguos como MAT.
+#
+# PENDIENTE: "ingles" (Enseñanza del Inglés) y "adm" (Administración) no
+# tienen código de programa Banner mapeado todavía — no hay archivos
+# banner_ingles_*.json ni banner_adm_*.json en output/raw/ desde los que
+# confirmarlo. Agregar la entrada correspondiente aquí cuando se confirme
+# el código real (ver getRestrictions en Banner, mismo método que las 3
+# carreras ya mapeadas).
 BANNER_PROGRAM_TO_CARRERA: dict[str, str] = {
     "BA-INFORM":  "isi",
     "BA-TOPOGR":  "topo",

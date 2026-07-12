@@ -37,9 +37,12 @@ generated/
 pgdata/
 postgres-data/
 
-# --- Datos crudos institucionales (Banner, mallas) ---
+# --- Datos crudos institucionales (Banner) ---
 # Contienen datos de profesores (nombre, correo) y son regenerables
-# corriendo malla_scraper.py / banner_connector.py -- no se versionan.
+# corriendo banner_connector.py -- no se versionan.
+# (La malla curricular ya no se scrapea: viene de
+# data-extractor/input/PLANES_DE_ESTUDIO.xlsx, verificado a mano y
+# versionado, cargado con excel_loader.py.)
 data-extractor/output/raw/*.json
 data-extractor/output/**/*.json
 

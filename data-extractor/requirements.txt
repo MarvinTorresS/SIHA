@@ -6,7 +6,7 @@
 # antes de pasar a producción.
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────
-requests==2.32.3          # Cliente HTTP para malla_scraper y banner_connector
+requests==2.32.3          # Cliente HTTP para banner_connector
 httpx==0.27.0             # Alternativa async (útil si Banner requiere concurrencia)
 
 # ── HTML Parsing ──────────────────────────────────────────────────────────────
@@ -15,6 +15,9 @@ lxml==5.2.2               # Parser C más rápido que html.parser (backend de BS
 
 # ── Base de Datos (Sprint 3) ──────────────────────────────────────────────────
 psycopg2-binary==2.9.9    # Driver PostgreSQL — usar psycopg2 (sin -binary) en producción
+
+# ── Excel (malla curricular, reemplaza a malla_scraper/botsrb.info) ───────────
+openpyxl==3.1.5            # Lee PLANES_DE_ESTUDIO.xlsx en excel_loader.py
 
 # ── Utilidades ────────────────────────────────────────────────────────────────
 python-dotenv==1.0.1      # Cargar .env con credenciales de BD (nunca hardcodear)

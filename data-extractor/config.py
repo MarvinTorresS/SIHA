@@ -55,22 +55,22 @@ CAMPUS_COTO_FILTER_TEXT = "SRB: Campus Coto"
 #   BA-INFORM   → Bach Ing. Sistemas Información        → isi
 #   BA-TOPOGR   → Bach Topografía y Catastro             → topo
 #   BA-TECOMCD  → Ba. Ing Tec Comp Ciencia Datos         → itecad
+#   BA-ADMINI   → Bach. Administración                   → adm
+#   BA-INGLES   → Bach Enseñanza del Inglés               → ingles
 #
 # Confirmado (04/jul/2026): TODAS las secciones traen el bloque de
 # programas en getRestrictions, no solo las compartidas — por lo tanto
 # es una fuente confiable para validar/asignar carrera, no solo un
 # parche para casos ambiguos como MAT.
 #
-# PENDIENTE: "ingles" (Enseñanza del Inglés) y "adm" (Administración) no
-# tienen código de programa Banner mapeado todavía — no hay archivos
-# banner_ingles_*.json ni banner_adm_*.json en output/raw/ desde los que
-# confirmarlo. Agregar la entrada correspondiente aquí cuando se confirme
-# el código real (ver getRestrictions en Banner, mismo método que las 3
-# carreras ya mapeadas).
+# BA-ADMINI / BA-INGLES confirmados el 11/jul/2026 con getRestrictions
+# real (CRN 51371/ETA400 y CRN 50927/LLH401, Campus Coto, ciclo 202620).
 BANNER_PROGRAM_TO_CARRERA: dict[str, str] = {
     "BA-INFORM":  "isi",
     "BA-TOPOGR":  "topo",
     "BA-TECOMCD": "itecad",
+    "BA-ADMINI":  "adm",
+    "BA-INGLES":  "ingles",
 }
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────

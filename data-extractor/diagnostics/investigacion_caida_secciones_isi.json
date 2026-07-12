@@ -1,0 +1,232 @@
+{
+  "EIF201": {
+    "total_devuelto_por_banner": 10,
+    "secciones": [
+      {
+        "crn": "50260",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 6,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "01"
+      },
+      {
+        "crn": "50264",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 17,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "05"
+      },
+      {
+        "crn": "50265",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 14,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "06"
+      },
+      {
+        "crn": "50267",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 21,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "08"
+      },
+      {
+        "crn": "50268",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 27,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "09"
+      },
+      {
+        "crn": "52892",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "Sec.Reg.Ctrl.Occ.Camp.Alajuela",
+        "seatsAvailable": 8,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "40"
+      },
+      {
+        "crn": "52899",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "Sec.Reg.Ctrl.Occ.Camp.Alajuela",
+        "seatsAvailable": 13,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "41"
+      },
+      {
+        "crn": "50099",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "SRCh: Campus Liberia",
+        "seatsAvailable": 1,
+        "maximumEnrollment": 35,
+        "sequenceNumber": "60"
+      },
+      {
+        "crn": "52516",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "SRCh. Campus Nicoya",
+        "seatsAvailable": 10,
+        "maximumEnrollment": 30,
+        "sequenceNumber": "70"
+      },
+      {
+        "crn": "50997",
+        "subject": "EIF",
+        "courseNumber": "201",
+        "campus": "SRB: Campus P&eacute;rez Zeled&oacute;n",
+        "seatsAvailable": 1,
+        "maximumEnrollment": 15,
+        "sequenceNumber": "89"
+      }
+    ],
+    "crn_esperado_presente": false
+  },
+  "EIF206": {
+    "total_devuelto_por_banner": 7,
+    "secciones": [
+      {
+        "crn": "50443",
+        "subject": "EIF",
+        "courseNumber": "206",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 5,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "01"
+      },
+      {
+        "crn": "50454",
+        "subject": "EIF",
+        "courseNumber": "206",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 19,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "06"
+      },
+      {
+        "crn": "50456",
+        "subject": "EIF",
+        "courseNumber": "206",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 11,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "07"
+      },
+      {
+        "crn": "52907",
+        "subject": "EIF",
+        "courseNumber": "206",
+        "campus": "Sec.Reg.Ctrl.Occ.Camp.Alajuela",
+        "seatsAvailable": 15,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "41"
+      },
+      {
+        "crn": "52522",
+        "subject": "EIF",
+        "courseNumber": "206",
+        "campus": "SRCh. Campus Nicoya",
+        "seatsAvailable": 15,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "72"
+      },
+      {
+        "crn": "51007",
+        "subject": "EIF",
+        "courseNumber": "206",
+        "campus": "SRB: Campus P&eacute;rez Zeled&oacute;n",
+        "seatsAvailable": 11,
+        "maximumEnrollment": 28,
+        "sequenceNumber": "82"
+      },
+      {
+        "crn": "51011",
+        "subject": "EIF",
+        "courseNumber": "206",
+        "campus": "SRB: Campus P&eacute;rez Zeled&oacute;n",
+        "seatsAvailable": 2,
+        "maximumEnrollment": 28,
+        "sequenceNumber": "83"
+      }
+    ],
+    "crn_esperado_presente": false
+  },
+  "EIF400": {
+    "total_devuelto_por_banner": 6,
+    "secciones": [
+      {
+        "crn": "50688",
+        "subject": "EIF",
+        "courseNumber": "400",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 3,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "04"
+      },
+      {
+        "crn": "50690",
+        "subject": "EIF",
+        "courseNumber": "400",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 1,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "05"
+      },
+      {
+        "crn": "50691",
+        "subject": "EIF",
+        "courseNumber": "400",
+        "campus": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+        "seatsAvailable": 4,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "06"
+      },
+      {
+        "crn": "50112",
+        "subject": "EIF",
+        "courseNumber": "400",
+        "campus": "SRCh: Campus Liberia",
+        "seatsAvailable": 1,
+        "maximumEnrollment": 38,
+        "sequenceNumber": "62"
+      },
+      {
+        "crn": "52532",
+        "subject": "EIF",
+        "courseNumber": "400",
+        "campus": "SRCh. Campus Nicoya",
+        "seatsAvailable": 3,
+        "maximumEnrollment": 20,
+        "sequenceNumber": "75"
+      },
+      {
+        "crn": "51026",
+        "subject": "EIF",
+        "courseNumber": "400",
+        "campus": "SRB: Campus P&eacute;rez Zeled&oacute;n",
+        "seatsAvailable": 1,
+        "maximumEnrollment": 25,
+        "sequenceNumber": "84"
+      }
+    ],
+    "crn_esperado_presente": false
+  },
+  "EIF425O": {
+    "total_devuelto_por_banner": 0,
+    "secciones": [],
+    "crn_esperado_presente": false
+  }
+}

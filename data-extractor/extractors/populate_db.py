@@ -6,15 +6,16 @@ Flujo:
   1. INSERT catálogos (carrera, periodo)
   2. INSERT cursos desde syllabi_normalized.json (malla)
   3. INSERT prerrequisitos (desde la malla)
+  3b. INSERT correquisitos (misma tabla prerrequisito, tipo='correquisito')
+  3c. INSERT prerequisitos de rango de ciclos (tabla prerequisito_ciclo, V5)
   4. INSERT secciones desde banner_*.json (Banner)
   5. INSERT profesores (desde secciones de Banner)
   6. INSERT horario_bloque (desde secciones de Banner)
   7. INSERT cursos de generales desde Banner (automático — no están en la malla)
-  8. RESOLVER créditos en 0 en curso usando datos de Banner
-  9. MERGE: UPDATE seccion.curso_id = curso.id_curso
+  8. MERGE: UPDATE seccion.curso_id = curso.id_curso
      JOIN por codigo_curso_banner = curso.codigo
      Prioriza el match con la carrera indicada por banner_program.
-  10. REPORTE: tasa de join, huérfanos, créditos en 0
+  9. REPORTE: tasa de join, huérfanos, créditos en 0
 
 Ejecución:
   python -m extractors.populate_db
@@ -24,6 +25,15 @@ Nota de diseño (créditos):
   sección de Banner reporta créditos en rango (ej. "1-3"); todos son
   valores exactos. Por eso el schema y este pipeline usan una sola
   columna `creditos`, no creditos_min/creditos_max.
+
+  Los créditos de curso vienen únicamente de PLANES_DE_ESTUDIO.xlsx
+  (verificado manualmente) vía excel_loader.py -- no se corrigen con datos
+  de Banner. Existió un paso _resolve_zero_credits_from_banner que hacía
+  esa corrección cuando la malla venía de malla_scraper.py (créditos poco
+  confiables); se eliminó porque el Excel ya es la fuente autoritativa.
+  seccion.creditos sí puede diferir de curso.creditos (Banner reporta
+  créditos por sección, curso.creditos es el de la malla) -- eso no
+  cambia con esta decisión, solo se dejó de sobrescribir curso.creditos.
 """
 
 import json
@@ -228,7 +238,7 @@ def _insert_courses_from_syllabus(conn, career_map: dict[str, int]) -> dict[str,
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _insert_prerequisites(conn, course_map: dict[str, int]):
-    """Inserta prerrequisitos desde la malla."""
+    """Inserta prerrequisitos desde la malla (tipo='prerequisito')."""
     path = OUTPUT_NORMALIZED_DIR / "syllabi_normalized.json"
     with open(path, encoding="utf-8") as f:
         raw_courses = json.load(f)
@@ -243,7 +253,7 @@ def _insert_prerequisites(conn, course_map: dict[str, int]):
             req_id = course_map.get(req)
             if req_id and (course_id, req_id) not in seen_pairs:
                 seen_pairs.add((course_id, req_id))
-                prereqs.append((course_id, req_id))
+                prereqs.append((course_id, req_id, "prerequisito"))
 
     if not prereqs:
         log.info("  ✓ 0 prerrequisitos para insertar")
@@ -253,13 +263,96 @@ def _insert_prerequisites(conn, course_map: dict[str, int]):
         execute_values(
             cur,
             """
-            INSERT INTO prerrequisito (id_curso, id_curso_requerido)
+            INSERT INTO prerrequisito (id_curso, id_curso_requerido, tipo)
             VALUES %s
-            ON CONFLICT (id_curso, id_curso_requerido) DO NOTHING
+            ON CONFLICT (id_curso, id_curso_requerido, tipo) DO NOTHING
             """,
             prereqs,
         )
     log.info(f"  ✓ {len(prereqs)} prerrequisitos insertados")
+
+
+def _insert_corequisites(conn, course_map: dict[str, int]):
+    """
+    Inserta correquisitos desde la malla en la misma tabla prerrequisito,
+    con tipo='correquisito'. El motor de prerrequisitos (prerrequisito.service.ts)
+    filtra por tipo='prerequisito' al construir el árbol de "qué debo tener
+    aprobado", así que estas filas nunca se tratan como requisito previo.
+    """
+    path = OUTPUT_NORMALIZED_DIR / "syllabi_normalized.json"
+    with open(path, encoding="utf-8") as f:
+        raw_courses = json.load(f)
+
+    coreqs = []
+    seen_pairs = set()
+    for c in raw_courses:
+        course_id = course_map.get(c["codigo"])
+        if not course_id:
+            continue
+        for req in c.get("correquisitos", []):
+            req_id = course_map.get(req)
+            if req_id and (course_id, req_id) not in seen_pairs:
+                seen_pairs.add((course_id, req_id))
+                coreqs.append((course_id, req_id, "correquisito"))
+
+    if not coreqs:
+        log.info("  ✓ 0 correquisitos para insertar")
+        return
+
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            INSERT INTO prerrequisito (id_curso, id_curso_requerido, tipo)
+            VALUES %s
+            ON CONFLICT (id_curso, id_curso_requerido, tipo) DO NOTHING
+            """,
+            coreqs,
+        )
+    log.info(f"  ✓ {len(coreqs)} correquisitos insertados")
+
+
+def _insert_cycle_range_prerequisites(conn, course_map: dict[str, int]):
+    """
+    Inserta prerequisito_ciclo desde la malla (campo "prerequisito_ciclo"
+    del JSON, ej. TGF425/TGF426: {"desde": "1 1", "hasta": "3 2"}).
+
+    A diferencia de `prerrequisito`, esta tabla no lista cursos puntuales:
+    guarda un rango de ciclo_id que el motor de prerrequisitos debe resolver
+    contra la malla vigente en tiempo de evaluación (ver V5).
+    """
+    path = OUTPUT_NORMALIZED_DIR / "syllabi_normalized.json"
+    with open(path, encoding="utf-8") as f:
+        raw_courses = json.load(f)
+
+    rows = []
+    for c in raw_courses:
+        rango = c.get("prerequisito_ciclo")
+        if not rango:
+            continue
+        course_id = course_map.get(c["codigo"])
+        if not course_id:
+            log.warning(f"  ⚠ {c['codigo']}: prerequisito_ciclo sin curso insertado, se omite")
+            continue
+        rows.append((course_id, rango["desde"], rango["hasta"]))
+
+    if not rows:
+        log.info("  ✓ 0 prerequisitos de rango de ciclos para insertar")
+        return
+
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            INSERT INTO prerequisito_ciclo (id_curso, ciclo_id_desde, ciclo_id_hasta)
+            VALUES %s
+            ON CONFLICT (id_curso) DO UPDATE SET
+                ciclo_id_desde = EXCLUDED.ciclo_id_desde,
+                ciclo_id_hasta = EXCLUDED.ciclo_id_hasta
+            """,
+            rows,
+        )
+    log.info(f"  ✓ {len(rows)} prerequisitos de rango de ciclos insertados")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -293,7 +386,7 @@ def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int
             # ── Profesor ──────────────────────────────────────────────────
             teacher_id = None
             teacher_name = (sec.get("instructor") or "").strip()
-            teacher_email = None
+            teacher_email = sec.get("instructor_email") or None
             if teacher_name:
                 cur.execute(
                     """
@@ -419,53 +512,6 @@ def _insert_general_courses_from_banner(conn):
         log.info(f"  ✓ {inserted} cursos de generales insertados desde Banner")
     else:
         log.info(f"  ✓ 0 cursos de generales nuevos (ya existían)")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PASO 8: Resolver créditos en 0 en curso usando datos de Banner
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _resolve_zero_credits_from_banner(conn):
-    """
-    Resuelve cursos con creditos = 0 en la malla usando los créditos
-    reales reportados por Banner (ej. EIF200: malla=0, Banner=3).
-
-    Toma el máximo de créditos entre todas las secciones de Banner que
-    matchean con el código del curso, y solo actualiza si ese valor es > 0.
-    Marca creditos_fuente = 'banner' para dejar rastro de auditoría.
-
-    IMPORTANTE: este paso corrige `curso` usando `seccion` como fuente de
-    verdad. Es el sentido inverso del MERGE (paso 9), que corrige
-    `seccion` usando `curso`. Ambos son necesarios y no son intercambiables:
-    - Este paso (8) resuelve datos faltantes/incorrectos en la malla.
-    - El MERGE (9) asigna id_curso y homogeniza secciones huérfanas.
-    Debe ejecutarse ANTES del MERGE para que el reporte de calidad refleje
-    los créditos ya corregidos.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE curso c
-            SET creditos = sub.creditos_banner,
-                creditos_fuente = 'banner',
-                actualizado_en = now()
-            FROM (
-                SELECT
-                    codigo_curso_banner,
-                    max(creditos) AS creditos_banner
-                FROM seccion
-                WHERE creditos > 0
-                GROUP BY codigo_curso_banner
-            ) sub
-            WHERE c.codigo = sub.codigo_curso_banner
-              AND c.creditos = 0
-            """
-        )
-        resolved = cur.rowcount
-    if resolved > 0:
-        log.info(f"  ✓ {resolved} cursos con créditos en 0 resueltos usando datos de Banner")
-    else:
-        log.info(f"  ✓ 0 cursos con créditos en 0 requerían resolución")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -634,6 +680,14 @@ def run():
         log.info("\n▶ Inserting prerequisites...")
         _insert_prerequisites(conn, course_map)
 
+        # 3b. Correquisitos (misma tabla, tipo='correquisito')
+        log.info("\n▶ Inserting corequisites...")
+        _insert_corequisites(conn, course_map)
+
+        # 3c. Prerequisitos de rango de ciclos (TGF425/TGF426, tabla V5)
+        log.info("\n▶ Inserting cycle-range prerequisites...")
+        _insert_cycle_range_prerequisites(conn, course_map)
+
         # 4-6. Secciones desde Banner
         log.info("\n▶ Inserting sections from Banner...")
         _insert_sections_from_banner(conn, period_id, career_map)
@@ -641,10 +695,6 @@ def run():
         # 7. Cursos de generales desde Banner (automático)
         log.info("\n▶ Inserting general courses from Banner...")
         _insert_general_courses_from_banner(conn)
-
-        # 8. Resolver créditos en 0 usando Banner (ANTES del merge)
-        log.info("\n▶ Resolving zero-credit courses from Banner...")
-        _resolve_zero_credits_from_banner(conn)
 
         # Re-cargar course_map para incluir los generales recién insertados
         with conn.cursor() as cur:

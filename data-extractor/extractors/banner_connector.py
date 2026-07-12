@@ -53,6 +53,9 @@ SUBJECTS_BY_PROGRAM = {
     "isi":    ["EIF", "MAT", "LIX", "EGF", "EGC", "EGS", "EGA"],
     "itecad": ["TDC", "MAT", "LIX", "EGF", "EGC", "EGS", "EGA"],
     "topo":   ["TGF", "MAT", "LIX", "FIY", "EGF", "EGC", "EGS", "EGA"],
+    # Prefijos derivados de syllabi_normalized.json (excel_loader.py), no adivinados.
+    "adm":    ["ETA", "MAT", "LIX", "EGF", "EGC", "EGS", "EGA"],
+    "ingles": ["LLH", "DEC", "DEX", "EGF", "EGC", "EGS", "EGA"],
 }
 
 # Códigos de Estudios Generales confirmados en Campus Coto (diagnóstico exhaustivo)
@@ -116,16 +119,19 @@ def _parse_schedules(meetings: list[dict]) -> list[dict]:
     return schedules
 
 
-def _parse_instructor(faculty: list[dict]) -> str:
+def _parse_instructor(faculty: list[dict]) -> tuple[str, str | None]:
     """
-    Nombre del instructor primario; si no hay primario, el primero.
-    Blindado contra displayName ausente o de tipo inesperado.
+    (nombre, email) del instructor primario; si no hay primario, el primero.
+    Blindado contra displayName/emailAddress ausentes o de tipo inesperado.
+    Banner sí incluye "emailAddress" en el mismo objeto que "displayName"
+    (confirmado con una llamada real a searchResults) -- antes se descartaba.
     """
     if not faculty:
-        return ""
+        return "", None
     primary = next((f for f in faculty if f.get("primaryIndicator")), faculty[0])
-    name = primary.get("displayName") or ""
-    return unescape(str(name))
+    name = unescape(str(primary.get("displayName") or ""))
+    email = str(primary.get("emailAddress") or "").strip() or None
+    return name, email
 
 
 def _parse_credits(sec: dict) -> int | float | str:
@@ -219,6 +225,7 @@ def _build_section(sec: dict, code: str, banner_program: str | None = None) -> d
     meetings  = sec.get("meetingsFaculty") or []
     faculty   = sec.get("faculty") or []
     start_date, end_date = _parse_dates(meetings)
+    instructor_name, instructor_email = _parse_instructor(faculty)
 
     return {
         "crn":       crn,
@@ -231,7 +238,8 @@ def _build_section(sec: dict, code: str, banner_program: str | None = None) -> d
         "capacity":     sec.get("maximumEnrollment") or 0,
         "enrolled":     sec.get("enrollment") or 0,
         "available":    sec.get("seatsAvailable") or 0,
-        "instructor":   _parse_instructor(faculty),
+        "instructor":       instructor_name,
+        "instructor_email": instructor_email,
         "schedules":    _parse_schedules(meetings),
         "start_date":   start_date,
         "end_date":     end_date,

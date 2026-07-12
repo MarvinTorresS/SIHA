@@ -1,0 +1,112 @@
+{
+  "curso_consultado": "EIF200",
+  "total_secciones_devueltas": 6,
+  "primera_seccion_con_faculty": {
+    "courseReferenceNumber": "50239",
+    "faculty_crudo": [
+      {
+        "bannerId": "381659",
+        "category": null,
+        "class": "net.hedtech.banner.student.faculty.FacultyResultDecorator",
+        "courseReferenceNumber": "50239",
+        "displayName": "SCHMIDT FONSECA, ILEANA",
+        "emailAddress": "ileana.schmidt.fonseca@una.cr",
+        "primaryIndicator": true,
+        "term": "202620"
+      }
+    ],
+    "seccion_completa_cruda": {
+      "id": 179698,
+      "term": "202620",
+      "termDesc": "CICLO II 2026",
+      "courseReferenceNumber": "50239",
+      "partOfTerm": "1",
+      "courseNumber": "200",
+      "subject": "EIF",
+      "subjectDescription": "Inform&aacute;tica -EIF",
+      "sequenceNumber": "01",
+      "campusDescription": "Campus Benjam&iacute;n N&uacute;&ntilde;ez",
+      "scheduleTypeDescription": "Teor&iacute;a - pr&aacute;ctica",
+      "courseTitle": "Fundamentos de inform&aacute;tica",
+      "creditHours": null,
+      "maximumEnrollment": 30,
+      "enrollment": 26,
+      "seatsAvailable": 4,
+      "waitCapacity": 0,
+      "waitCount": 0,
+      "waitAvailable": 0,
+      "crossList": null,
+      "crossListCapacity": null,
+      "crossListCount": null,
+      "crossListAvailable": null,
+      "creditHourHigh": null,
+      "creditHourLow": 3,
+      "creditHourIndicator": null,
+      "openSection": true,
+      "linkIdentifier": null,
+      "isSectionLinked": false,
+      "subjectCourse": "EIF200",
+      "faculty": [
+        {
+          "bannerId": "381659",
+          "category": null,
+          "class": "net.hedtech.banner.student.faculty.FacultyResultDecorator",
+          "courseReferenceNumber": "50239",
+          "displayName": "SCHMIDT FONSECA, ILEANA",
+          "emailAddress": "ileana.schmidt.fonseca@una.cr",
+          "primaryIndicator": true,
+          "term": "202620"
+        }
+      ],
+      "meetingsFaculty": [
+        {
+          "category": "01",
+          "class": "net.hedtech.banner.student.schedule.SectionSessionDecorator",
+          "courseReferenceNumber": "50239",
+          "faculty": [],
+          "meetingTime": {
+            "beginTime": "0800",
+            "building": "A701EX",
+            "buildingDescription": "Ciencias Exactas y Naturales",
+            "campus": "HO",
+            "campusDescription": "Campus Omar Dengo",
+            "category": "01",
+            "class": "net.hedtech.banner.general.overall.MeetingTimeDecorator",
+            "courseReferenceNumber": "50239",
+            "creditHourSession": 3.0,
+            "endDate": "11/14/2026",
+            "endTime": "0940",
+            "friday": false,
+            "hoursWeek": 4.0,
+            "meetingScheduleType": "CTP",
+            "meetingType": "CLAS",
+            "meetingTypeDescription": "Clase",
+            "monday": true,
+            "room": null,
+            "saturday": false,
+            "startDate": "07/20/2026",
+            "sunday": false,
+            "term": "202620",
+            "thursday": true,
+            "tuesday": false,
+            "wednesday": false
+          },
+          "term": "202620"
+        }
+      ],
+      "reservedSeatSummary": null,
+      "sectionAttributes": [
+        {
+          "class": "net.hedtech.banner.student.schedule.SectionDegreeProgramAttributeDecorator",
+          "code": "CE",
+          "courseReferenceNumber": "50239",
+          "description": "Curso propio de la disciplina",
+          "isZTCAttribute": false,
+          "termCode": "202620"
+        }
+      ],
+      "instructionalMethod": "PRE",
+      "instructionalMethodDescription": "Presencial"
+    }
+  }
+}

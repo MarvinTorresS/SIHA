@@ -33,6 +33,7 @@ async function buildPrerequisiteTree(
     where: { codigo: courseCode },
     include: {
       requisitosDe: {
+        where: { tipo: "prerequisito" },
         include: {
           cursoRequerido: true,
         },

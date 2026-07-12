@@ -1,0 +1,8 @@
+{
+  "crn_consultado": "51371",
+  "term_code_usado": "202620",
+  "html_crudo": "\r\n<div aria-live=\"assertive\">\r\n\r\n    <div class=\"infoicon\"><span class=\"status-bold\">Not all restrictions are applicable.</span></div> <br/>\r\n    \r\n        \r\n            <span class=\"status-bold\">Must be enrolled in one of the following Campuses: </span><br/>\r\n                \r\n                    <span class=\"detail-popup-indentation\">SRB: Campus Coto (BC)</span><br/>\r\n                \r\n        \r\n        <br/>\r\n    \r\n        \r\n            <span class=\"status-bold\">Must be enrolled in one of the following Cohorts: </span><br/>\r\n                \r\n                    <span class=\"detail-popup-indentation\">Bachillerato (2026BA)</span><br/>\r\n                \r\n        \r\n        <br/>\r\n    \r\n        \r\n            <span class=\"status-bold\">Must be enrolled in one of the following Programs: </span><br/>\r\n                \r\n                    <span class=\"detail-popup-indentation\">Bach. Administraci&oacute;n (BA-ADMINI)</span><br/>\r\n                \r\n        \r\n        <br/>\r\n    \r\n        \r\n            <span class=\"status-bold\">Special Approvals:</span><br/>\r\n                \r\n                    <span class=\"detail-popup-indentation\">Req aprob previa p/matricula</span><br/>\r\n                \r\n        \r\n        <br/>\r\n    \r\n\r\n</div>\r\n\r\n",
+  "codigos_programa_extraidos": [
+    "BA-ADMINI"
+  ]
+}

@@ -73,13 +73,14 @@ model periodo {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model prerrequisito {
-  id_prerrequisito   Int   @id @default(autoincrement())
+  id_prerrequisito   Int    @id @default(autoincrement())
   id_curso           Int
   id_curso_requerido Int
-  curso              curso @relation("prerrequisito_id_cursoTocurso", fields: [id_curso], references: [id_curso], onDelete: Cascade, onUpdate: NoAction)
-  cursoRequerido     curso @relation("prerrequisito_id_curso_requeridoTocurso", fields: [id_curso_requerido], references: [id_curso], onDelete: Cascade, onUpdate: NoAction)
+  tipo               String @default("prerequisito") @db.VarChar(20)
+  curso              curso  @relation("prerrequisito_id_cursoTocurso", fields: [id_curso], references: [id_curso], onDelete: Cascade, onUpdate: NoAction)
+  cursoRequerido     curso  @relation("prerrequisito_id_curso_requeridoTocurso", fields: [id_curso_requerido], references: [id_curso], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([id_curso, id_curso_requerido], map: "uq_prerrequisito")
+  @@unique([id_curso, id_curso_requerido, tipo], map: "uq_prerrequisito")
   @@index([id_curso], map: "ix_prerrequisito_curso")
   @@index([id_curso_requerido], map: "ix_prerrequisito_requerido")
 }

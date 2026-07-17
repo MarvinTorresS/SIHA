@@ -1,0 +1,281 @@
+@import "tailwindcss";
+
+/*
+  SIHA — Tema institucional UNA
+  -------------------------------------------------------------
+  Paleta oficial (manual de marca UNA):
+    Rojo UNA   #EA0029  -> marca / navegación / acentos (NO usar para error)
+    Azul UNA   #001489  -> soporte, info, estados neutros
+    Gris UNA   #A7A8AA  -> neutro de transición, bordes, fondos secundarios
+    Blanco     #FFFFFF
+    Negro      #000000
+
+  Regla de diseño: el rojo institucional nunca se usa como color de
+  "conflicto/error" para evitar que un estudiante confunda un elemento
+  de marca con una alerta de choque de horario. Los conflictos usan
+  --warning (ámbar), definido aparte.
+*/
+
+@theme {
+  --font-sans: "Sora", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, monospace;
+
+  --color-una-rojo: #ea0029;
+  --color-una-azul: #001489;
+  --color-una-gris: #a7a8aa;
+}
+:root {
+  --radius: 0.625rem;
+
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+
+  /* Primary = Rojo UNA, reservado para marca/acentos/CTA principal */
+  --primary: #ea0029;
+  --primary-foreground: #ffffff;
+
+  /* Secondary = Azul UNA, para soporte visual y estados informativos */
+  --secondary: #001489;
+  --secondary-foreground: #ffffff;
+
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+
+  /* Accent = Gris UNA, neutro de transición (fondos sutiles, hover) */
+  --accent: #a7a8aa;
+  --accent-foreground: #0a0a0a;
+
+  /* Destructive: separado del rojo institucional para no chocar semánticamente.
+     Se usa un rojo distinto (más oscuro/quemado) solo para errores reales
+     de sistema (ej. fallo de red), NO para conflictos de horario. */
+  --destructive: #b91c1c;
+  --destructive-foreground: #ffffff;
+
+  /* Warning: color exclusivo de conflicto de horario */
+  --warning: #d97706;
+  --warning-foreground: #ffffff;
+  --warning-bg: #fef3c7;
+
+  /* Success: cursos sin conflicto / confirmados */
+  --success: #15803d;
+  --success-foreground: #ffffff;
+  --success-bg: #dcfce7;
+
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #ea0029;
+
+  --chart-1: #ea0029;
+  --chart-2: #001489;
+  --chart-3: #a7a8aa;
+  --chart-4: #d97706;
+  --chart-5: #15803d;
+
+  /* Estado de curso — cursando/sin_seccion, centralizados junto a
+     success/warning para poder controlar su contraste en modo oscuro
+     desde un solo lugar (DESIGN.md, sección 6 "Do"). */
+  --estado-cursando: #2563eb;
+  --estado-cursando-bg: #dbeafe;
+  --estado-sin-seccion: #7c3aed;
+  --estado-sin-seccion-bg: #ede9fe;
+
+  /* Área académica — acento decorativo por prefijo de código de curso. */
+  --area-matematica: #6366f1;
+  --area-matematica-bg: #eef2ff;
+  --area-informatica: #10b981;
+  --area-informatica-bg: #ecfdf5;
+  --area-ingles: #ec4899;
+  --area-ingles-bg: #fdf2f8;
+  --area-generales: #f97316;
+  --area-generales-bg: #fff7ed;
+  --area-optativa: #06b6d4;
+  --area-optativa-bg: #ecfeff;
+  --area-general: #64748b;
+  --area-general-bg: #f8fafc;
+
+  /* Línea de conexión del resaltado de prerrequisitos en la malla --
+     azul dedicado, distinto de Azul UNA (marca, --secondary) y del azul
+     de "Cursando" (--estado-cursando), para no pisar esos significados. */
+  --prereq-link: #3b82f6;
+
+  --sidebar: #fafafa;
+  --sidebar-foreground: #0a0a0a;
+  --sidebar-primary: #ea0029;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f4f4f5;
+  --sidebar-accent-foreground: #0a0a0a;
+  --sidebar-border: #e4e4e7;
+  --sidebar-ring: #ea0029;
+}
+
+/*
+  Modo oscuro — misma paleta institucional UNA, mismos tokens semánticos
+  (DESIGN.md: "construir el modo oscuro como una capa .dark sobre estos
+  mismos tokens, preservando qué color significa qué estado"). Se aplica
+  agregando la clase "dark" en <html> (ver AppShell.tsx + useThemeStore).
+
+  --primary/--secondary/--destructive/--warning/--success se mantienen con
+  el mismo hex: siempre se usan como fondo sólido con su *-foreground claro
+  encima (botones, badges rellenos), así que el contraste no depende del
+  tema de la página. Lo que sí cambia es todo lo que se pinta contra el
+  fondo de la página (background/foreground/card/muted/border) y los
+  tokens pastel *-bg (success-bg/warning-bg), que en claro son un tinte
+  pálido con texto saturado encima y en oscuro necesitan un tinte oscuro
+  para mantener ese mismo contraste.
+*/
+.dark {
+  --background: #0a0a0a;
+  --foreground: #f4f4f5;
+
+  --card: #18181b;
+  --card-foreground: #f4f4f5;
+
+  --popover: #18181b;
+  --popover-foreground: #f4f4f5;
+
+  --primary: #ea0029;
+  --primary-foreground: #ffffff;
+
+  --secondary: #001489;
+  --secondary-foreground: #ffffff;
+
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+
+  --accent: #3f3f46;
+  --accent-foreground: #f4f4f5;
+
+  --destructive: #f87171;
+  --destructive-foreground: #450a0a;
+
+  --warning: #fbbf24;
+  --warning-foreground: #451a03;
+  --warning-bg: #422006;
+
+  --success: #4ade80;
+  --success-foreground: #052e16;
+  --success-bg: #052e16;
+
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #ea0029;
+
+  --chart-1: #ea0029;
+  --chart-2: #5b6fd8;
+  --chart-3: #a7a8aa;
+  --chart-4: #fbbf24;
+  --chart-5: #4ade80;
+
+  --estado-cursando: #60a5fa;
+  --estado-cursando-bg: #1e3a5f;
+  --estado-sin-seccion: #a78bfa;
+  --estado-sin-seccion-bg: #2e1065;
+
+  --area-matematica: #818cf8;
+  --area-matematica-bg: #1e1b4b;
+  --area-informatica: #34d399;
+  --area-informatica-bg: #022c22;
+  --area-ingles: #f472b6;
+  --area-ingles-bg: #500724;
+  --area-generales: #fb923c;
+  --area-generales-bg: #431407;
+  --area-optativa: #22d3ee;
+  --area-optativa-bg: #083344;
+  --area-general: #94a3b8;
+  --area-general-bg: #1e293b;
+
+  --prereq-link: #60a5fa;
+
+  --sidebar: #18181b;
+  --sidebar-foreground: #f4f4f5;
+  --sidebar-primary: #ea0029;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #27272a;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: #27272a;
+  --sidebar-ring: #ea0029;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-bg: var(--warning-bg);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-bg: var(--success-bg);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-estado-cursando: var(--estado-cursando);
+  --color-estado-cursando-bg: var(--estado-cursando-bg);
+  --color-estado-sin-seccion: var(--estado-sin-seccion);
+  --color-estado-sin-seccion-bg: var(--estado-sin-seccion-bg);
+  --color-area-matematica: var(--area-matematica);
+  --color-area-matematica-bg: var(--area-matematica-bg);
+  --color-area-informatica: var(--area-informatica);
+  --color-area-informatica-bg: var(--area-informatica-bg);
+  --color-area-ingles: var(--area-ingles);
+  --color-area-ingles-bg: var(--area-ingles-bg);
+  --color-area-generales: var(--area-generales);
+  --color-area-generales-bg: var(--area-generales-bg);
+  --color-area-optativa: var(--area-optativa);
+  --color-area-optativa-bg: var(--area-optativa-bg);
+  --color-area-general: var(--area-general);
+  --color-area-general-bg: var(--area-general-bg);
+  --color-prereq-link: var(--prereq-link);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    outline-color: color-mix(in oklch, var(--ring) 50%, transparent);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    /* --font-sans (Sora) ya está tokenizado en @theme y genera la utilidad
+       .font-sans, pero Tailwind v4 no la aplica sola a <body> -- solo
+       --default-font-family lo haría, y no está definida. Sin esta línea
+       toda la interfaz cae al stack sans-serif genérico de Tailwind. */
+    font-family: var(--font-sans);
+  }
+}

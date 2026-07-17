@@ -36,10 +36,14 @@ Reglas de transformación (decididas junto al usuario, ver conversación):
 
   4. Código "—" + nombre que empieza con "estudios generales" (comparado
      normalizado: minúsculas, espacios colapsados): son cursos sin código
-     propio en la malla. Se les genera GEN1..GEN4 en el orden en que
-     aparecen dentro de la carrera — códigos que populate_db.py ya excluye
-     explícitamente vía PLACEHOLDERS_GENERALES (populate_db.py líneas
-     174-198), sin necesidad de tocar ese script.
+     propio en la malla, y SÍ deben insertarse (a diferencia de una regla
+     anterior que los excluía por completo -- ver historial). Se genera un
+     código namespaced por carrera GEN{n}_{SIGLA} (ej. GEN1_ISI, GEN2_ISI),
+     mismo patrón que la regla 5 para Optativas, y por el mismo motivo: el
+     código placeholder "GEN1" se repite entre carreras y curso.codigo es
+     UNIQUE. El nombre real (ej. "Estudios Generales I") se conserva tal
+     cual viene del Excel; el frontend es responsable de mostrarlo de forma
+     genérica (sin el sufijo de carrera) en la malla.
 
   5. Código "—" u "OPT" (varía por hoja) + nombre que contiene "optativ"
      (Optativa/Optativo/Curso Optativo, comparado normalizado): SÍ deben
@@ -310,7 +314,7 @@ def _cargar_hoja(ws, sigla: str, nombre_carrera: str) -> list[CursoMallaExcel]:
 
         if familia == "GEN":
             gen_n += 1
-            codigo = f"GEN{gen_n}"
+            codigo = f"GEN{gen_n}_{sigla.upper()}"
             nombre_a_codigo[_normalizar_texto(curso)] = codigo
         elif familia == "OPT":
             opt_n += 1

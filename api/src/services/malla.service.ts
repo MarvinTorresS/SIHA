@@ -78,38 +78,42 @@ export async function getCurriculumByProgram(
 ): Promise<Curriculum | null> {
   const program = await prisma.carrera.findUnique({
     where: { sigla: programAcronym },
-    include: {
-      curso: {
-        orderBy: { codigo: "asc" },
-      },
-    },
   });
 
   if (!program) {
     return null;
   }
 
+  // Se resuelve vía curso_carrera, no curso.id_carrera -- un mismo curso
+  // (ej. LIX410 "Inglés Integrado I") puede requerirse en varias carreras,
+  // cada una en un ciclo distinto (ver V8__agregar_curso_carrera.sql).
+  const cursosCarrera = await prisma.curso_carrera.findMany({
+    where: { id_carrera: program.id_carrera },
+    include: { curso: true },
+    orderBy: [{ ciclo_id: "asc" }, { curso: { codigo: "asc" } }],
+  });
+
   // Se agrupa en un Map para preservar el orden de inserción y evitar
   // duplicar la búsqueda de cada ciclo; luego se convierte a array.
   const cycleMap = new Map<string, CurriculumCycle>();
 
-  for (const course of program.curso) {
-    let cycle = cycleMap.get(course.ciclo_id);
+  for (const cc of cursosCarrera) {
+    let cycle = cycleMap.get(cc.ciclo_id);
 
     if (!cycle) {
       cycle = {
-        cycleId: course.ciclo_id,
-        cycleName: CYCLE_NAME_OVERRIDES[course.ciclo_id] ?? course.ciclo_nombre,
+        cycleId: cc.ciclo_id,
+        cycleName: CYCLE_NAME_OVERRIDES[cc.ciclo_id] ?? cc.ciclo_nombre,
         courses: [],
       };
-      cycleMap.set(course.ciclo_id, cycle);
+      cycleMap.set(cc.ciclo_id, cycle);
     }
 
     cycle.courses.push({
-      code: course.codigo,
-      name: course.nombre,
-      credits: Number(course.creditos),
-      isElective: course.es_optativo,
+      code: cc.curso.codigo,
+      name: cc.curso.nombre,
+      credits: Number(cc.curso.creditos),
+      isElective: cc.curso.es_optativo,
     });
   }
 

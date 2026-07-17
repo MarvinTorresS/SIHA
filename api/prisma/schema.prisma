@@ -8,13 +8,14 @@ datasource db {
 }
 
 model carrera {
-  id_carrera Int          @id @default(autoincrement())
-  sigla      String       @unique @db.VarChar(10)
-  nombre     String       @db.VarChar(150)
-  campus     String       @default("Campus Coto") @db.VarChar(50)
-  creado_en  DateTime     @default(now()) @db.Timestamptz(6)
-  curso      curso[]
-  estudiante estudiante[]
+  id_carrera    Int             @id @default(autoincrement())
+  sigla         String          @unique @db.VarChar(10)
+  nombre        String          @db.VarChar(150)
+  campus        String          @default("Campus Coto") @db.VarChar(50)
+  creado_en     DateTime        @default(now()) @db.Timestamptz(6)
+  curso         curso[]
+  curso_carrera curso_carrera[]
+  estudiante    estudiante[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -33,6 +34,7 @@ model curso {
   ciclo_nombre       String              @default("") @db.VarChar(50)
   es_optativo        Boolean             @default(false)
   carrera            carrera?            @relation(fields: [id_carrera], references: [id_carrera], onDelete: Restrict, onUpdate: NoAction)
+  curso_carrera      curso_carrera[]
   historial_curso    historial_curso[]
   prerequisito_ciclo prerequisito_ciclo?
   requisitosDe       prerrequisito[]     @relation("prerrequisito_id_cursoTocurso")
@@ -137,6 +139,7 @@ model estudiante {
   id_carrera      Int
   ciclo_actual_id String            @default("") @db.VarChar(10)
   creado_en       DateTime          @default(now()) @db.Timestamptz(6)
+  password_hash   String            @db.VarChar(100)
   carrera         carrera           @relation(fields: [id_carrera], references: [id_carrera], onUpdate: NoAction, map: "fk_estudiante_carrera")
   historial       historial_curso[]
 
@@ -183,4 +186,18 @@ model prerequisito_ciclo {
   ciclo_id_desde        String @db.VarChar(10)
   ciclo_id_hasta        String @db.VarChar(10)
   curso                 curso  @relation(fields: [id_curso], references: [id_curso], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model curso_carrera {
+  id_curso     Int
+  id_carrera   Int
+  ciclo_id     String   @default("") @db.VarChar(10)
+  ciclo_nombre String   @default("") @db.VarChar(50)
+  creado_en    DateTime @default(now()) @db.Timestamptz(6)
+  carrera      carrera  @relation(fields: [id_carrera], references: [id_carrera], onDelete: Cascade, onUpdate: NoAction)
+  curso        curso    @relation(fields: [id_curso], references: [id_curso], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([id_curso, id_carrera])
+  @@index([id_carrera], map: "ix_curso_carrera_carrera")
 }

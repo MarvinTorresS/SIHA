@@ -165,12 +165,24 @@ def _insert_courses_from_syllabus(conn, career_map: dict[str, int]) -> dict[str,
     """
     Inserta cursos desde syllabi_normalized.json.
     Retorna {codigo: id_curso} para el MERGE posterior.
+
+    Dos tablas distintas, dos granularidades:
+    - `curso`: identidad única por código (matchea secciones de Banner vía
+      codigo_curso_banner, y es lo que referencia historial_curso). Se
+      deduplica por código -- créditos y es_optativo no varían entre
+      carreras en los datos reales.
+    - `curso_carrera`: UNA fila por cada aparición real (código, carrera)
+      en el Excel, SIN deduplicar. Necesaria porque varios cursos de
+      servicio (ej. LIX410 "Inglés Integrado I") se repiten en distintas
+      carreras, cada una en un ciclo distinto -- deduplicar por código
+      perdía silenciosamente el curso de todas las carreras menos la
+      primera en aparecer (ver V8__agregar_curso_carrera.sql).
     """
     path = OUTPUT_NORMALIZED_DIR / "syllabi_normalized.json"
     with open(path, encoding="utf-8") as f:
         raw_courses = json.load(f)
 
-    # Deduplicar por código
+    # Deduplicar por código para la identidad única en `curso`.
     seen = set()
     unique_courses = []
     for c in raw_courses:
@@ -181,30 +193,19 @@ def _insert_courses_from_syllabus(conn, career_map: dict[str, int]) -> dict[str,
         unique_courses.append(c)
 
     # Preparar tuplas para INSERT
-    # Nota: GEN1-GEN4 son placeholders genéricos de "Estudios Generales" que
-    # aparecen en la malla sin prefijo de Banner (a diferencia de EGF/EGC/EGS/EGA,
-    # que sí tienen prefijo y sí se cargan). Los reales llegan por separado desde
-    # Banner en _insert_general_courses_from_banner. Ver Roadmap: "GEN1–GEN4
-    # malla placeholders have no Banner prefix and are intentionally excluded".
-    PLACEHOLDERS_GENERALES = {"GEN1", "GEN2", "GEN3", "GEN4"}
-
+    # Nota: GEN1_{SIGLA}..GEN4_{SIGLA} son placeholders genéricos de "Estudios
+    # Generales" -- namespaced por carrera en excel_loader.py igual que OPT*,
+    # porque curso.codigo es UNIQUE y el mismo "Estudios Generales I" se repite
+    # en varias carreras. SÍ se insertan (a diferencia de una regla anterior
+    # que los excluía por completo): representan el slot de la malla que el
+    # estudiante llena con un curso real de generales, cuyo código Banner
+    # (EGF/EGC/EGS/EGA) se carga aparte en _insert_general_courses_from_banner.
     rows = []
     codes = []
     for c in unique_courses:
         code = c["codigo"]
-        if code in PLACEHOLDERS_GENERALES:
-            log.info(f"  ⏭ {code}: placeholder de generales, excluido a propósito")
-            continue
         credits = _parse_credits(c["creditos"])
-        career_id = career_map.get(c["carrera_sigla"])
-        if not career_id:
-            log.warning(f"  ⚠ {code}: carrera '{c['carrera_sigla']}' no encontrada")
-            continue
-        rows.append((
-            code, c["nombre"], credits, career_id,
-            c.get("ciclo_id", ""), c.get("ciclo_nombre", ""),
-            c.get("es_optativo", False),
-        ))
+        rows.append((code, c["nombre"], credits, c.get("es_optativo", False)))
         codes.append(code)
 
     log.info(f"  Cursos a insertar: {len(rows)}")
@@ -213,14 +214,11 @@ def _insert_courses_from_syllabus(conn, career_map: dict[str, int]) -> dict[str,
         execute_values(
             cur,
             """
-            INSERT INTO curso (codigo, nombre, creditos,
-                               id_carrera, ciclo_id, ciclo_nombre, es_optativo)
+            INSERT INTO curso (codigo, nombre, creditos, es_optativo)
             VALUES %s
             ON CONFLICT (codigo) DO UPDATE SET
                 nombre = EXCLUDED.nombre,
                 creditos = EXCLUDED.creditos,
-                ciclo_id = EXCLUDED.ciclo_id,
-                ciclo_nombre = EXCLUDED.ciclo_nombre,
                 es_optativo = EXCLUDED.es_optativo,
                 actualizado_en = now()
             """,
@@ -230,7 +228,41 @@ def _insert_courses_from_syllabus(conn, career_map: dict[str, int]) -> dict[str,
             "SELECT codigo, id_curso FROM curso WHERE codigo = ANY(%s)",
             (codes,)
         )
-        return {row[0]: row[1] for row in cur.fetchall()}
+        course_map = {row[0]: row[1] for row in cur.fetchall()}
+
+    # curso_carrera: una fila por (código, carrera) real de la fuente, sin
+    # deduplicar -- un mismo curso puede requerirse en varias mallas.
+    cc_rows = []
+    for c in raw_courses:
+        code = c["codigo"]
+        course_id = course_map.get(code)
+        career_id = career_map.get(c["carrera_sigla"])
+        if not course_id:
+            continue
+        if not career_id:
+            log.warning(f"  ⚠ {code}: carrera '{c['carrera_sigla']}' no encontrada")
+            continue
+        cc_rows.append((
+            course_id, career_id,
+            c.get("ciclo_id", ""), c.get("ciclo_nombre", ""),
+        ))
+
+    log.info(f"  Relaciones curso-carrera a insertar: {len(cc_rows)}")
+
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            INSERT INTO curso_carrera (id_curso, id_carrera, ciclo_id, ciclo_nombre)
+            VALUES %s
+            ON CONFLICT (id_curso, id_carrera) DO UPDATE SET
+                ciclo_id = EXCLUDED.ciclo_id,
+                ciclo_nombre = EXCLUDED.ciclo_nombre
+            """,
+            cc_rows,
+        )
+
+    return course_map
 
 
 # ──────────────────────────────────────────────────────────────────────────────

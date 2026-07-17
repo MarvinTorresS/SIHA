@@ -71,6 +71,57 @@ router.get("/secciones/:codigo", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });
+/**
+ * GET /api/horarios/nrc/:nrc
+ * Devuelve una sección individual por su NRC.
+ *
+ * Se usa findFirst en vez de findUnique porque la constraint unique
+ * real en la BD es (nrc, id_periodo), no nrc solo. Para este endpoint
+ * alcanza con buscar por nrc y asumir un solo período activo.
+ */
+router.get("/nrc/:nrc", async (req: Request, res: Response) => {
+  try {
+    const nrc = (req.params as Record<string, string>).nrc;
+
+    const seccion = await prisma.seccion.findFirst({
+      where: { nrc },
+      include: {
+        horario_bloque: true,
+        profesor: true,
+      },
+    });
+
+    if (!seccion) {
+      res.status(404).json({
+        error: `No se encontró la sección con NRC ${nrc}`,
+      });
+      return;
+    }
+
+    const result = {
+      nrc: seccion.nrc,
+      codigoCurso: seccion.codigo_curso_banner,
+      titulo: seccion.titulo,
+      seccion: seccion.numero_seccion,
+      creditos: Number(seccion.creditos),
+      capacidad: seccion.capacidad,
+      inscritos: seccion.inscritos,
+      disponibles: seccion.disponibles,
+      profesor: seccion.profesor?.nombre ?? null,
+      horarios: seccion.horario_bloque.map((h) => ({
+        dia: h.dia,
+        horaInicio: timeToHourString(h.hora_inicio),
+        horaFin: timeToHourString(h.hora_fin),
+        aula: h.aula,
+      })),
+    };
+
+    res.json(result);
+  } catch (err) {
+    console.error(`GET /api/horarios/nrc/${req.params.nrc}:`, err);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
 
 /**
  * POST /api/horarios/validar

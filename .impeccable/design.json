@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-09T00:00:00.000Z",
+  "title": "Design System: SIHA",
+  "extensions": {
+    "colorMeta": {
+      "una-rojo": { "role": "primary", "displayName": "Rojo UNA", "canonical": "oklch(55% 0.22 25)", "tonalRamp": ["oklch(20% 0.10 25)", "oklch(30% 0.15 25)", "oklch(40% 0.19 25)", "oklch(50% 0.21 25)", "oklch(55% 0.22 25)", "oklch(68% 0.18 25)", "oklch(82% 0.10 25)", "oklch(94% 0.03 25)"] },
+      "una-azul": { "role": "secondary", "displayName": "Azul UNA", "canonical": "oklch(24% 0.14 264)", "tonalRamp": ["oklch(15% 0.09 264)", "oklch(20% 0.12 264)", "oklch(24% 0.14 264)", "oklch(35% 0.15 264)", "oklch(48% 0.16 264)", "oklch(62% 0.13 264)", "oklch(80% 0.07 264)", "oklch(93% 0.02 264)"] },
+      "una-gris": { "role": "tertiary", "displayName": "Gris UNA", "canonical": "oklch(70% 0.01 260)", "tonalRamp": ["oklch(20% 0.005 260)", "oklch(35% 0.006 260)", "oklch(50% 0.008 260)", "oklch(60% 0.009 260)", "oklch(70% 0.01 260)", "oklch(80% 0.008 260)", "oklch(90% 0.006 260)", "oklch(97% 0.003 260)"] },
+      "success": { "role": "status", "displayName": "Verde Aprobado", "canonical": "oklch(48% 0.14 145)", "tonalRamp": ["oklch(18% 0.06 145)", "oklch(28% 0.09 145)", "oklch(38% 0.12 145)", "oklch(48% 0.14 145)", "oklch(58% 0.14 145)", "oklch(72% 0.12 145)", "oklch(86% 0.08 145)", "oklch(95% 0.03 145)"] },
+      "warning": { "role": "status", "displayName": "Ámbar Conflicto", "canonical": "oklch(63% 0.16 60)", "tonalRamp": ["oklch(22% 0.06 60)", "oklch(35% 0.10 60)", "oklch(48% 0.14 60)", "oklch(63% 0.16 60)", "oklch(72% 0.15 60)", "oklch(82% 0.11 60)", "oklch(90% 0.07 60)", "oklch(96% 0.03 60)"] },
+      "estado-cursando": { "role": "status", "displayName": "Azul Cursando", "canonical": "oklch(52% 0.20 258)", "tonalRamp": ["oklch(20% 0.09 258)", "oklch(30% 0.14 258)", "oklch(42% 0.18 258)", "oklch(52% 0.20 258)", "oklch(62% 0.18 258)", "oklch(75% 0.13 258)", "oklch(87% 0.06 258)", "oklch(95% 0.02 258)"] },
+      "estado-sin-seccion": { "role": "status", "displayName": "Violeta Sin Sección", "canonical": "oklch(48% 0.22 300)", "tonalRamp": ["oklch(18% 0.10 300)", "oklch(28% 0.15 300)", "oklch(38% 0.19 300)", "oklch(48% 0.22 300)", "oklch(60% 0.20 300)", "oklch(74% 0.14 300)", "oklch(87% 0.07 300)", "oklch(96% 0.02 300)"] },
+      "destructive": { "role": "status", "displayName": "Rojo Error de Sistema", "canonical": "oklch(45% 0.19 25)", "tonalRamp": ["oklch(16% 0.08 25)", "oklch(26% 0.13 25)", "oklch(36% 0.17 25)", "oklch(45% 0.19 25)", "oklch(56% 0.19 25)", "oklch(70% 0.15 25)", "oklch(85% 0.08 25)", "oklch(95% 0.02 25)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Único número grande por pantalla — porcentaje de avance en la malla. No usar para más de un elemento a la vez." },
+      "headline": { "displayName": "Headline", "purpose": "Título de página en el Header." },
+      "title": { "displayName": "Title", "purpose": "Títulos de tarjeta y nombre de curso." },
+      "body": { "displayName": "Body", "purpose": "Texto general y metadata." },
+      "label": { "displayName": "Label", "purpose": "Sublabels, texto de badge, encabezados de sección puntuales." },
+      "code": { "displayName": "Code", "purpose": "Códigos de curso y NRC de sección, en Fira Code." }
+    },
+    "shadows": [
+      { "name": "surface-base", "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)", "purpose": "Bajo cada Card, uso constante (shadow-sm)." },
+      { "name": "control-interactive", "value": "0 1px 2px 0 rgb(0 0 0 / 0.03)", "purpose": "Bajo botones y badges default (shadow-xs)." }
+    ],
+    "motion": [
+      { "name": "color-transition", "value": "150ms ease-out", "purpose": "Transición de color en hover/focus de botones, badges y accordion triggers." }
+    ],
+    "breakpoints": [
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Acción principal de la pantalla, en Rojo UNA.",
+      "html": "<button class=\"ds-btn-primary\">Confirmar matrícula</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 8px; background: #EA0029; color: #FFFFFF; font-family: Sora, sans-serif; font-size: 14px; font-weight: 500; border: none; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.03); transition: background 150ms ease-out; } .ds-btn-primary:hover { background: color-mix(in oklch, #EA0029 90%, black); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(234 0 41 / 0.5); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Acción de soporte, en Azul UNA.",
+      "html": "<button class=\"ds-btn-secondary\">Ver malla completa</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 8px; background: #001489; color: #FFFFFF; font-family: Sora, sans-serif; font-size: 14px; font-weight: 500; border: none; transition: background 150ms ease-out; } .ds-btn-secondary:hover { background: color-mix(in oklch, #001489 80%, white); }"
+    },
+    {
+      "name": "Estado Badge — Aprobado",
+      "kind": "chip",
+      "refersTo": "badge-success",
+      "description": "Badge de estado de curso: aprobado.",
+      "html": "<span class=\"ds-badge-success\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\"/><polyline points=\"22 4 12 14.01 9 11.01\"/></svg>Aprobado</span>",
+      "css": ".ds-badge-success { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; background: #DCFCE7; color: #15803D; font-family: Sora, sans-serif; font-size: 12px; font-weight: 500; }"
+    },
+    {
+      "name": "Estado Badge — Sin Sección",
+      "kind": "chip",
+      "refersTo": "badge-sin-seccion",
+      "description": "Badge de estado de curso: matriculado sin sección asignada. Usa violeta, nunca ámbar (reservado para choques de horario).",
+      "html": "<span class=\"ds-badge-sinseccion\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z\"/><line x1=\"12\" x2=\"12\" y1=\"9\" y2=\"13\"/><line x1=\"12\" x2=\"12.01\" y1=\"17\" y2=\"17\"/></svg>Sin sección</span>",
+      "css": ".ds-badge-sinseccion { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; background: rgb(124 58 237 / 0.15); color: #7C3AED; font-family: Sora, sans-serif; font-size: 12px; font-weight: 500; }"
+    },
+    {
+      "name": "Curso Card",
+      "kind": "card",
+      "refersTo": "card-default",
+      "description": "Tarjeta de curso con franja superior por área académica — único acento de color lateral-libre permitido.",
+      "html": "<div class=\"ds-curso-card\"><div class=\"ds-curso-card-top\"><span class=\"ds-curso-code\">EIF201</span><span class=\"ds-curso-area\">Informática</span></div><p class=\"ds-curso-name\">Programación I</p><p class=\"ds-curso-credits\">4 créditos</p></div>",
+      "css": ".ds-curso-card { background: #FFFFFF; border: 1px solid #E4E4E7; border-top: 4px solid #10B981; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); font-family: Sora, sans-serif; } .ds-curso-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; } .ds-curso-code { font-family: 'Fira Code', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; } .ds-curso-area { font-size: 10px; font-weight: 500; color: #059669; background: rgb(16 185 129 / 0.1); padding: 2px 6px; border-radius: 6px; } .ds-curso-name { font-size: 14px; font-weight: 600; margin: 0 0 4px; } .ds-curso-credits { font-size: 12px; color: #71717A; margin: 0; }"
+    },
+    {
+      "name": "Progress Bar",
+      "kind": "custom",
+      "refersTo": "progress-avance",
+      "description": "Barra de avance de carrera, en Rojo UNA.",
+      "html": "<div class=\"ds-progress\"><div class=\"ds-progress-fill\" style=\"width:62%\"></div></div>",
+      "css": ".ds-progress { position: relative; height: 10px; width: 100%; border-radius: 9999px; background: rgb(234 0 41 / 0.2); overflow: hidden; } .ds-progress-fill { height: 100%; background: #EA0029; transition: width 300ms ease-out; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "El Tablero de Control del Registrador",
+    "overview": "SIHA se comporta como el tablero de un registrador universitario meticuloso, no como el mostrador de trámites que reemplaza. Cada pantalla existe para que un estudiante de Campus Coto responda, sin ambigüedad, dos preguntas: ¿mi horario tiene choques? y ¿dónde estoy parado en mi carrera? La superficie es institucional (rojo, azul y gris de la UNA), pero la ejecución es la de una herramienta de datos moderna: jerarquía tipográfica clara, estado codificado por color con disciplina semántica, y cero decoración que no cargue información. El sistema rechaza explícitamente dos extremos. No es el formulario burocrático denso de un sistema universitario legado — tipografía diminuta, sin jerarquía, todo con el mismo peso visual. Tampoco es un dashboard SaaS genérico e intercambiable — nada de Inter, nada de degradados morado-a-azul, nada de tarjetas anidadas dentro de tarjetas, nada de texto gris flotando sobre fondos de color. El rojo institucional es la firma de marca, nunca la señal de error; ese rol es exclusivo del ámbar, y solo para choques de horario.",
+    "keyCharacteristics": [
+      "Rojo UNA como firma de marca y acento de acción primaria; nunca como estado de error o conflicto.",
+      "Ámbar reservado en exclusiva para choques de horario en Mi Horario — ninguna otra situación lo usa.",
+      "Cuatro estados de curso (aprobado, cursando, pendiente, sin_seccion) con un color dedicado cada uno, consistente en cualquier pantalla.",
+      "Sora como única familia tipográfica, apoyada por Fira Code para códigos de curso — sin mezclar una segunda sans-serif genérica.",
+      "Tarjetas planas con borde sutil y sombra mínima; la jerarquía se construye con tipografía y color, no con elevación."
+    ],
+    "rules": [
+      { "name": "La Regla de Exclusividad del Ámbar", "body": "El ámbar (--warning) se usa únicamente para choques de horario en Mi Horario. Ninguna otra alerta, error de sistema o estado de curso puede tomarlo prestado — por eso sin sección usa violeta y no ámbar.", "section": "colors" },
+      { "name": "La Regla de Marca-No-Es-Error", "body": "El rojo institucional nunca representa error, conflicto o estado negativo. Los errores de sistema usan --destructive (#B91C1C), un rojo distinto y más oscuro.", "section": "colors" },
+      { "name": "La Regla de Familia Única", "body": "Toda la interfaz usa Sora. No se introduce una segunda sans-serif parecida en ningún componente nuevo.", "section": "typography" },
+      { "name": "La Regla de Plano-por-Defecto", "body": "Las superficies son planas en reposo. La sombra existe para separar tarjeta de fondo, no para simular elevación dramática; nunca blur grande ni glassmorphism decorativo.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do usar Sora como única familia sans en toda la interfaz; Fira Code solo para códigos de curso y NRC.",
+      "Do mantener el ámbar exclusivo para choques de horario.",
+      "Do mantener el rojo institucional fuera de cualquier estado de error o conflicto.",
+      "Do usar la franja superior de 4px como único acento de color permitido en una tarjeta de curso, nunca lateral.",
+      "Do promover estado-cursando y estado-sin-seccion a custom properties centralizadas junto a --success y --warning.",
+      "Do construir el modo oscuro como una capa .dark sobre estos mismos tokens semánticos — requisito de accesibilidad confirmado, aún no implementado."
+    ],
+    "donts": [
+      "Don't usar tipografía Inter ni ninguna sans-serif genérica parecida a Sora.",
+      "Don't usar degradados morado-a-azul en ningún elemento.",
+      "Don't anidar tarjetas dentro de tarjetas.",
+      "Don't poner texto gris sobre fondos de color.",
+      "Don't usar border-left o border-right de color como acento.",
+      "Don't repetir el patrón de ícono en tile redondeado sobre cada encabezado de sección como reflejo por defecto.",
+      "Don't dar por hecho que el historial académico mostrado está sincronizado con el registro oficial de la universidad."
+    ]
+  }
+}

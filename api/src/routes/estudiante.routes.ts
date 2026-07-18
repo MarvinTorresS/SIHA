@@ -1,13 +1,16 @@
 import { Router, Request, Response } from "express";
 import {
   getMallaProgreso,
+  getOfertaCiclo,
+  confirmarMatricula,
   marcarCursoAprobado,
-  desmarcarCursoAprobado,
+  desmarcarCurso,
   EstudianteNoEncontradoError,
   PeriodoActivoInvalidoError,
   CursoNoEncontradoError,
   CursoFueraDeCarreraError,
   CursoNoMarcableError,
+  SeccionNoEncontradaError,
 } from "../services/estudiante.service";
 import { requireAuth, requireOwnCarnet } from "../middleware/requireAuth";
 
@@ -52,6 +55,87 @@ estudianteRouter.get(
 );
 
 /**
+ * GET /api/estudiantes/:carnet/oferta
+ *
+ * Oferta de cursos del período activo para la carrera del propio
+ * estudiante, con estado ya resuelto (aprobado / cursando / elegible /
+ * bloqueado) cruzando Banner + historial + el motor de prerrequisitos.
+ * Ver getOfertaCiclo en estudiante.service.ts para el detalle completo.
+ *
+ * Protegida igual que malla-progreso: requiere sesión y que :carnet sea
+ * el del propio estudiante.
+ */
+estudianteRouter.get(
+  "/estudiantes/:carnet/oferta",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+
+    try {
+      const oferta = await getOfertaCiclo(carnet);
+      return res.json(oferta);
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      if (err instanceof PeriodoActivoInvalidoError) {
+        return res.status(500).json({ error: err.message });
+      }
+      console.error("Error en GET /estudiantes/:carnet/oferta", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
+ * POST /api/estudiantes/:carnet/matricula
+ * Body: { nrcs: string[] }
+ *
+ * Confirma la matrícula del borrador armado en Mis Cursos: cada NRC pasa
+ * su curso a estado 'cursando' en historial_curso. Ver confirmarMatricula
+ * en estudiante.service.ts (transacción, no hay matrícula parcial).
+ */
+estudianteRouter.post(
+  "/estudiantes/:carnet/matricula",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+    const { nrcs } = req.body as { nrcs?: unknown };
+
+    if (!Array.isArray(nrcs) || nrcs.length === 0) {
+      return res.status(400).json({
+        error: "El body debe incluir 'nrcs' como un arreglo no vacío de strings",
+      });
+    }
+    if (!nrcs.every((nrc) => typeof nrc === "string")) {
+      return res.status(400).json({ error: "Todos los elementos de 'nrcs' deben ser strings" });
+    }
+
+    try {
+      await confirmarMatricula(carnet, nrcs);
+      return res.status(204).send();
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      if (err instanceof SeccionNoEncontradaError) {
+        return res.status(400).json({ error: err.message });
+      }
+      if (err instanceof CursoFueraDeCarreraError) {
+        return res.status(403).json({ error: err.message });
+      }
+      if (err instanceof PeriodoActivoInvalidoError) {
+        return res.status(500).json({ error: err.message });
+      }
+      console.error("Error en POST /estudiantes/:carnet/matricula", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
  * POST /api/estudiantes/:carnet/historial
  * Body: { codigoCurso }
  *
@@ -89,10 +173,9 @@ estudianteRouter.post(
 /**
  * DELETE /api/estudiantes/:carnet/historial/:codigoCurso
  *
- * Deshace un "marcar como aprobado" hecho por el propio estudiante --
- * el curso vuelve a pendiente o sin_seccion según corresponda (ver regla
- * en desmarcarCursoAprobado). Solo aplica a "aprobado"; "cursando" queda
- * fuera de alcance, igual que en el POST de arriba.
+ * Deshace un "marcar como aprobado" (Malla) O una matrícula confirmada
+ * en estado "cursando" (Mis Cursos) -- misma acción desde la perspectiva
+ * del estudiante, ver desmarcarCurso en estudiante.service.ts.
  */
 estudianteRouter.delete(
   "/estudiantes/:carnet/historial/:codigoCurso",
@@ -103,7 +186,7 @@ estudianteRouter.delete(
     const codigoCurso = req.params.codigoCurso as string;
 
     try {
-      await desmarcarCursoAprobado(carnet, codigoCurso);
+      await desmarcarCurso(carnet, codigoCurso);
       return res.status(204).send();
     } catch (err) {
       if (err instanceof EstudianteNoEncontradoError || err instanceof CursoNoEncontradoError) {

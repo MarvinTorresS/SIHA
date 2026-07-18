@@ -49,6 +49,9 @@ data-extractor/output/**/*.json
 # --- Reportes generados ---
 orphaned_records.csv
 
+# --- Basura de debug ---
+api/malla_isi.json
+
 # --- IDEs y editores ---
 .vscode/*
 !.vscode/extensions.json

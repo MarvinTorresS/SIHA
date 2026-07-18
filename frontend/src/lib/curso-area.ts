@@ -35,6 +35,32 @@ const AREA_CONFIG: Record<string, AreaConfig> = {
     borderClassName: "border-t-area-generales",
     badgeClassName: "bg-area-generales-bg text-area-generales",
   },
+  // Códigos reales de Estudios Generales en Banner (EGF/EGC/EGS/EGA),
+  // distintos de los placeholders GEN{n}_{SIGLA} que genera excel_loader.py
+  // para el slot de la malla -- mismo concepto, dos familias de código
+  // (ver _insert_general_courses_from_banner en populate_db.py). Sin
+  // estas entradas, resolverArea() caía al fallback genérico "General"
+  // en vez de "Estudios generales".
+  EGF: {
+    label: "Estudios generales",
+    borderClassName: "border-t-area-generales",
+    badgeClassName: "bg-area-generales-bg text-area-generales",
+  },
+  EGC: {
+    label: "Estudios generales",
+    borderClassName: "border-t-area-generales",
+    badgeClassName: "bg-area-generales-bg text-area-generales",
+  },
+  EGS: {
+    label: "Estudios generales",
+    borderClassName: "border-t-area-generales",
+    badgeClassName: "bg-area-generales-bg text-area-generales",
+  },
+  EGA: {
+    label: "Estudios generales",
+    borderClassName: "border-t-area-generales",
+    badgeClassName: "bg-area-generales-bg text-area-generales",
+  },
   OPT: {
     label: "Optativa",
     borderClassName: "border-t-area-optativa",

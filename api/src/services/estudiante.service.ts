@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { getDirectCorequisites, getDirectPrerequisites } from "./prerrequisito.service";
 
 const prisma = new PrismaClient();
 
@@ -296,6 +297,303 @@ export async function getMallaProgreso(
   };
 }
 
+// -----------------------------------------------------------------------
+// Tipos de salida del endpoint GET /api/estudiantes/:carnet/oferta
+// -----------------------------------------------------------------------
+
+export type EstadoOferta = "aprobado" | "cursando" | "elegible" | "bloqueado";
+
+export interface SeccionOfertaInfo {
+  nrc: string;
+  numeroSeccion: string;
+  profesor: string | null;
+  capacidad: number;
+  inscritos: number;
+  disponibles: number;
+  horarios: HorarioBloqueInfo[];
+}
+
+export interface CursoOferta {
+  codigo: string;
+  nombre: string;
+  creditos: string;
+  cicloId: string;
+  cicloNombre: string;
+  estado: EstadoOferta;
+  // Solo no-vacío cuando estado === "bloqueado" -- los prerrequisitos
+  // directos (tipo='prerequisito') que el estudiante todavía no tiene
+  // en estado "aprobado" en su historial.
+  prerrequisitosFaltantes: { code: string; name: string }[];
+  // Informativo siempre que existan, sin importar el estado -- no
+  // bloquea la elegibilidad (decisión: validar "ambos en el horario"
+  // queda para Mi Horario, no para esta pantalla).
+  corequisitos: { code: string; name: string; credits: number }[];
+  // Solo presente cuando estado === "cursando": la sección real en la
+  // que el estudiante ya quedó matriculado institucionalmente este
+  // período (viene de historial_curso.id_seccion, no es una elección
+  // del estudiante en esta pantalla).
+  seccionActual: SeccionOfertaInfo | null;
+  // Secciones ofertadas por Banner este período para este curso --
+  // vacío jamás en la respuesta final, porque un curso sin ninguna
+  // sección ofertada no aparece en el arreglo (ver getOfertaCiclo).
+  secciones: SeccionOfertaInfo[];
+}
+
+/**
+ * Oferta de cursos del período activo para la carrera del estudiante,
+ * cruzando Banner (seccion) + su historial + el motor de prerrequisitos,
+ * en una sola respuesta -- evita que el frontend arme esto con N
+ * llamadas por curso.
+ *
+ * Alcance: TODOS los cursos de la carrera con al menos una sección
+ * ofertada este período, sin filtrar por ciclo_actual_id -- un
+ * estudiante puede necesitar adelantar una electiva o repetir un curso
+ * de un ciclo anterior que Banner sí está ofertando (decisión
+ * confirmada). Un curso sin ninguna sección ofertada no aparece en el
+ * resultado: no hay nada que el estudiante pueda elegir para él.
+ *
+ * Estados:
+ * - "aprobado"/"cursando": vienen directo de historial_curso.
+ * - sin fila de historial: se corre el motor de prerrequisitos DIRECTOS
+ *   (un solo nivel, no el árbol recursivo completo) contra el set de
+ *   códigos que el estudiante tiene "aprobado" -- todos aprobados =
+ *   "elegible", si falta alguno = "bloqueado" con el detalle de cuáles.
+ */
+export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
+  const estudiante = await prisma.estudiante.findUnique({
+    where: { carnet },
+    include: { carrera: true },
+  });
+  if (!estudiante) {
+    throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
+  }
+
+  const periodosActivos = await prisma.periodo.findMany({ where: { activo: true } });
+  if (periodosActivos.length !== 1) {
+    throw new PeriodoActivoInvalidoError(
+      `Se esperaba exactamente 1 periodo activo, se encontraron ${periodosActivos.length}`
+    );
+  }
+  const periodoActivo = periodosActivos[0];
+
+  const cursosCarrera = await prisma.curso_carrera.findMany({
+    where: { id_carrera: estudiante.id_carrera },
+    include: { curso: true },
+  });
+
+  // Estudios Generales (EGF/EGC/EGS/EGA): NUNCA viven en curso_carrera --
+  // se insertan directo en `curso` desde Banner (es_general=true,
+  // id_carrera NULL a propósito, ver _insert_general_courses_from_banner
+  // en populate_db.py) porque no pertenecen a ninguna malla específica.
+  // Sin agregarlos aparte, la oferta nunca los mostraba -- confirmado
+  // contra la BD real (7 cursos es_general=true, 0 filas en
+  // curso_carrera para todos). Sus SECCIONES sí siguen scoped por
+  // carrera como cualquier otra (ver filtro de banner_program más abajo)
+  // -- "sin malla propia" no es lo mismo que "sin restricción de oferta".
+  const generales = await prisma.curso.findMany({ where: { es_general: true } });
+
+  type CandidatoOferta = { curso: (typeof cursosCarrera)[number]["curso"]; cicloId: string; cicloNombre: string };
+  const cursosCandidatos: CandidatoOferta[] = [
+    ...cursosCarrera.map((cc) => ({ curso: cc.curso, cicloId: cc.ciclo_id, cicloNombre: cc.ciclo_nombre })),
+    ...generales.map((g) => ({ curso: g, cicloId: g.ciclo_id, cicloNombre: g.ciclo_nombre })),
+  ];
+  const codigos = cursosCandidatos.map((c) => c.curso.codigo);
+
+  const todasLasSecciones = await prisma.seccion.findMany({
+    where: { id_periodo: periodoActivo.id_periodo, codigo_curso_banner: { in: codigos } },
+    include: { profesor: true, horario_bloque: true },
+    orderBy: { numero_seccion: "asc" },
+  });
+
+  // Filtrado por carrera: codigo_curso_banner por sí solo no basta -- un
+  // curso compartido (ej. LIX410 "Inglés Integrado I", o un general como
+  // EGA121) puede tener secciones distintas por carrera en Banner
+  // (banner_program en metadata, poblado por populate_db.py desde el
+  // archivo banner_*.json de origen -- cada búsqueda de Banner solo trae
+  // las secciones que esa carrera puede tomar realmente, no es una
+  // etiqueta arbitraria). Sin este filtro, un estudiante de ISI veía
+  // TAMBIÉN secciones publicadas para otras carreras aunque su propio
+  // banner_isi_*.json no las ofertara -- confirmado dos veces: con
+  // LIX410 (2 secciones reales vs 4 en la UI) y con los generales (2
+  // secciones reales en banner_isi vs 6 cursos generales en la UI, antes
+  // de quitar la excepción que los dejaba sin filtrar). banner_program
+  // ausente/null = sección sin scope conocido, se muestra a cualquier
+  // carrera (mismo criterio que usa el MERGE en populate_db.py para no
+  // perder secciones huérfanas de metadata).
+  const secciones = todasLasSecciones.filter((s) => {
+    const metadata = s.metadata as Record<string, unknown> | null;
+    const bannerProgram = metadata?.banner_program;
+    return !bannerProgram || bannerProgram === estudiante.carrera.sigla;
+  });
+
+  const seccionesPorCurso = new Map<string, typeof secciones>();
+  for (const s of secciones) {
+    const lista = seccionesPorCurso.get(s.codigo_curso_banner) ?? [];
+    lista.push(s);
+    seccionesPorCurso.set(s.codigo_curso_banner, lista);
+  }
+
+  const mapSeccion = (s: (typeof secciones)[number]): SeccionOfertaInfo => ({
+    nrc: s.nrc,
+    numeroSeccion: s.numero_seccion,
+    profesor: s.profesor?.nombre ?? null,
+    capacidad: s.capacidad,
+    inscritos: s.inscritos,
+    disponibles: s.disponibles,
+    horarios: s.horario_bloque.map((b) => ({
+      dia: b.dia,
+      horaInicio: formatHora(b.hora_inicio),
+      horaFin: formatHora(b.hora_fin),
+      aula: b.aula,
+    })),
+  });
+
+  // curso: true (no solo id_curso) porque un curso aprobado puede no
+  // pertenecer a curso_carrera de ESTA carrera (ej. un general) y aun
+  // así debe contar para desbloquear prerrequisitos de otros cursos.
+  const historial = await prisma.historial_curso.findMany({
+    where: { id_estudiante: estudiante.id_estudiante },
+    include: {
+      curso: true,
+      seccion: { include: { profesor: true, horario_bloque: true } },
+    },
+  });
+  const historialPorCurso = new Map(historial.map((h) => [h.id_curso, h]));
+  const codigosAprobados = new Set(
+    historial.filter((h) => h.estado === "aprobado").map((h) => h.curso.codigo)
+  );
+
+  const cursosConOferta = cursosCandidatos.filter((c) =>
+    seccionesPorCurso.has(c.curso.codigo)
+  );
+
+  const resultado: CursoOferta[] = [];
+  for (const candidato of cursosConOferta) {
+    const curso = candidato.curso;
+    const filaHistorial = historialPorCurso.get(curso.id_curso);
+    const seccionesOfertadas = seccionesPorCurso.get(curso.codigo) ?? [];
+    const corequisitos = await getDirectCorequisites(curso.id_curso, estudiante.id_carrera);
+
+    let estado: EstadoOferta;
+    let prerrequisitosFaltantes: { code: string; name: string }[] = [];
+    let seccionActual: SeccionOfertaInfo | null = null;
+
+    if (filaHistorial?.estado === "aprobado") {
+      estado = "aprobado";
+    } else if (filaHistorial?.estado === "cursando") {
+      estado = "cursando";
+      seccionActual = filaHistorial.seccion ? mapSeccion(filaHistorial.seccion) : null;
+    } else {
+      const prerequisitosDirectos = await getDirectPrerequisites(curso.id_curso, estudiante.id_carrera);
+      prerrequisitosFaltantes = prerequisitosDirectos.filter(
+        (p) => !codigosAprobados.has(p.code)
+      );
+      estado = prerrequisitosFaltantes.length > 0 ? "bloqueado" : "elegible";
+    }
+
+    resultado.push({
+      codigo: curso.codigo,
+      nombre: curso.nombre,
+      creditos: curso.creditos.toString(),
+      cicloId: candidato.cicloId,
+      cicloNombre: candidato.cicloNombre,
+      estado,
+      prerrequisitosFaltantes,
+      corequisitos,
+      seccionActual,
+      secciones: seccionesOfertadas.map(mapSeccion),
+    });
+  }
+
+  resultado.sort((a, b) => a.codigo.localeCompare(b.codigo));
+  return resultado;
+}
+
+export class SeccionNoEncontradaError extends Error {}
+
+/**
+ * Confirma la matrícula del borrador armado en Mis Cursos: por cada NRC,
+ * sube historial_curso a estado='cursando' con la sección real elegida.
+ * Mismo patrón de upsert y de validación de pertenencia a la carrera que
+ * marcarCursoAprobado -- sin validación extra contra un 'aprobado'
+ * existente, porque el frontend ya solo deja seleccionar cursos
+ * "elegibles" (sin fila de historial todavía), así que ese NRC nunca
+ * debería llegar acá para un curso ya aprobado.
+ *
+ * Corre en una transacción: si un NRC falla (no existe en el periodo
+ * activo, o el curso no pertenece a la carrera), NINGÚN curso del lote
+ * se confirma -- evita una matrícula parcial silenciosa.
+ */
+export async function confirmarMatricula(carnet: string, nrcs: string[]): Promise<void> {
+  const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
+  if (!estudiante) {
+    throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
+  }
+
+  const periodosActivos = await prisma.periodo.findMany({ where: { activo: true } });
+  if (periodosActivos.length !== 1) {
+    throw new PeriodoActivoInvalidoError(
+      `Se esperaba exactamente 1 periodo activo, se encontraron ${periodosActivos.length}`
+    );
+  }
+  const periodoActivo = periodosActivos[0];
+
+  await prisma.$transaction(async (tx) => {
+    for (const nrc of nrcs) {
+      // findFirst, no findUnique: la constraint real es (nrc, id_periodo),
+      // no nrc solo (ver horario.routes.ts).
+      const seccion = await tx.seccion.findFirst({
+        where: { nrc, id_periodo: periodoActivo.id_periodo },
+        include: { curso: true },
+      });
+      if (!seccion || !seccion.curso) {
+        throw new SeccionNoEncontradaError(
+          `No se encontró la sección con NRC ${nrc} en el período activo`
+        );
+      }
+      const curso = seccion.curso;
+
+      if (!curso.es_general) {
+        const pertenece = await tx.curso_carrera.findUnique({
+          where: {
+            id_curso_id_carrera: {
+              id_curso: curso.id_curso,
+              id_carrera: estudiante.id_carrera,
+            },
+          },
+        });
+        if (!pertenece) {
+          throw new CursoFueraDeCarreraError(
+            `El curso ${curso.codigo} no pertenece a la carrera del estudiante`
+          );
+        }
+      }
+
+      await tx.historial_curso.upsert({
+        where: {
+          id_estudiante_id_curso: {
+            id_estudiante: estudiante.id_estudiante,
+            id_curso: curso.id_curso,
+          },
+        },
+        create: {
+          id_estudiante: estudiante.id_estudiante,
+          id_curso: curso.id_curso,
+          estado: "cursando",
+          id_seccion: seccion.id_seccion,
+          id_periodo: periodoActivo.id_periodo,
+        },
+        update: {
+          estado: "cursando",
+          id_seccion: seccion.id_seccion,
+          id_periodo: periodoActivo.id_periodo,
+          actualizado_en: new Date(),
+        },
+      });
+    }
+  });
+}
+
 /**
  * Marca un curso como aprobado en el historial del estudiante --
  * ingresado por el propio estudiante, no sincronizado con el registro
@@ -359,18 +657,23 @@ export async function marcarCursoAprobado(
 }
 
 /**
- * Deshace un "marcar como aprobado" hecho por el propio estudiante,
- * borrando la fila de historial_curso. No se hardcodea el estado al que
- * vuelve el curso: al borrar la fila, getMallaProgreso recalcula si queda
- * "pendiente" o "sin_seccion" según la oferta vigente del periodo activo,
- * que es la misma regla que ya usa para cualquier curso sin historial.
+ * Deshace un "marcar como aprobado" O una matrícula confirmada
+ * ("cursando"), borrando la fila de historial_curso. No se hardcodea el
+ * estado al que vuelve el curso: al borrar la fila, getMallaProgreso /
+ * getOfertaCiclo recalculan el estado que corresponda (pendiente,
+ * sin_seccion, elegible o bloqueado) según la oferta y prerrequisitos
+ * vigentes -- misma regla que ya usa cualquier curso sin historial.
  *
- * Solo deshace "aprobado" -- un curso "cursando" tiene una sección real
- * matriculada y su edición sigue fuera de alcance (mismo límite que
- * marcarCursoAprobado). Operación idempotente: si no hay fila de
- * historial, no hace nada en vez de fallar.
+ * Generalizado a partir de la versión que solo aceptaba "aprobado":
+ * desde el punto de vista del estudiante, "quitar un curso del
+ * borrador" y "dar de baja un curso ya confirmado" son la misma acción
+ * (un solo click, sin distinción de comportamiento) -- ver Mis Cursos.
+ * "cursando" tenía una sección real matriculada; borrar la fila no
+ * borra la sección de Banner, solo el vínculo del estudiante con ella.
+ * Operación idempotente: si no hay fila de historial, no hace nada en
+ * vez de fallar.
  */
-export async function desmarcarCursoAprobado(
+export async function desmarcarCurso(
   carnet: string,
   codigoCurso: string
 ): Promise<void> {
@@ -395,9 +698,9 @@ export async function desmarcarCursoAprobado(
 
   if (!filaHistorial) return;
 
-  if (filaHistorial.estado !== "aprobado") {
+  if (filaHistorial.estado !== "aprobado" && filaHistorial.estado !== "cursando") {
     throw new CursoNoMarcableError(
-      `El curso ${codigoCurso} no está marcado como aprobado`
+      `El curso ${codigoCurso} no está marcado como aprobado ni cursando`
     );
   }
 

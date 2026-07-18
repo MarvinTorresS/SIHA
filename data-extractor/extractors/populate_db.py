@@ -269,79 +269,95 @@ def _insert_courses_from_syllabus(conn, career_map: dict[str, int]) -> dict[str,
 # PASO 3: Prerrequisitos
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _insert_prerequisites(conn, course_map: dict[str, int]):
-    """Inserta prerrequisitos desde la malla (tipo='prerequisito')."""
+def _insert_prerequisites(conn, course_map: dict[str, int], career_map: dict[str, int]):
+    """
+    Inserta prerrequisitos desde la malla (tipo='prerequisito'), con
+    id_carrera resuelto desde la fila de origen (c["carrera_sigla"]).
+
+    El Excel define prerrequisitos por hoja/carrera, y un mismo curso
+    compartido entre carreras (ej. MAT002) puede tener requisitos DISTINTOS
+    según la carrera (ISI exige MAT030, TOPO/ITECAD exigen solo MAT001).
+    Sin id_carrera, una tabla global terminaba con la UNIÓN de todos los
+    requisitos de todas las hojas -- un estudiante de TOPO se veía exigido
+    un curso (MAT030) que ni siquiera existe en su malla. Se hace un
+    reemplazo completo (DELETE + INSERT) en vez de upsert incremental
+    porque esta tabla no tiene otra fuente de verdad más que la malla, y
+    así se limpian también las filas viejas sin scope de corridas
+    anteriores a este fix.
+    """
     path = OUTPUT_NORMALIZED_DIR / "syllabi_normalized.json"
     with open(path, encoding="utf-8") as f:
         raw_courses = json.load(f)
 
     prereqs = []
-    seen_pairs = set()
+    seen_triples = set()
     for c in raw_courses:
         course_id = course_map.get(c["codigo"])
-        if not course_id:
+        career_id = career_map.get(c["carrera_sigla"])
+        if not course_id or not career_id:
             continue
         for req in c.get("prerequisitos", []):
             req_id = course_map.get(req)
-            if req_id and (course_id, req_id) not in seen_pairs:
-                seen_pairs.add((course_id, req_id))
-                prereqs.append((course_id, req_id, "prerequisito"))
-
-    if not prereqs:
-        log.info("  ✓ 0 prerrequisitos para insertar")
-        return
+            if req_id and (course_id, req_id, career_id) not in seen_triples:
+                seen_triples.add((course_id, req_id, career_id))
+                prereqs.append((course_id, req_id, "prerequisito", career_id))
 
     with conn.cursor() as cur:
-        execute_values(
-            cur,
-            """
-            INSERT INTO prerrequisito (id_curso, id_curso_requerido, tipo)
-            VALUES %s
-            ON CONFLICT (id_curso, id_curso_requerido, tipo) DO NOTHING
-            """,
-            prereqs,
-        )
-    log.info(f"  ✓ {len(prereqs)} prerrequisitos insertados")
+        cur.execute("DELETE FROM prerrequisito WHERE tipo = 'prerequisito'")
+        deleted = cur.rowcount
+        if prereqs:
+            execute_values(
+                cur,
+                """
+                INSERT INTO prerrequisito (id_curso, id_curso_requerido, tipo, id_carrera)
+                VALUES %s
+                ON CONFLICT (id_curso, id_curso_requerido, tipo, id_carrera) DO NOTHING
+                """,
+                prereqs,
+            )
+    log.info(f"  ✓ {len(prereqs)} prerrequisitos insertados ({deleted} filas viejas reemplazadas)")
 
 
-def _insert_corequisites(conn, course_map: dict[str, int]):
+def _insert_corequisites(conn, course_map: dict[str, int], career_map: dict[str, int]):
     """
     Inserta correquisitos desde la malla en la misma tabla prerrequisito,
-    con tipo='correquisito'. El motor de prerrequisitos (prerrequisito.service.ts)
-    filtra por tipo='prerequisito' al construir el árbol de "qué debo tener
-    aprobado", así que estas filas nunca se tratan como requisito previo.
+    con tipo='correquisito' e id_carrera resuelto igual que en
+    _insert_prerequisites. El motor de prerrequisitos
+    (prerrequisito.service.ts) filtra por tipo='prerequisito' al construir
+    el árbol de "qué debo tener aprobado", así que estas filas nunca se
+    tratan como requisito previo.
     """
     path = OUTPUT_NORMALIZED_DIR / "syllabi_normalized.json"
     with open(path, encoding="utf-8") as f:
         raw_courses = json.load(f)
 
     coreqs = []
-    seen_pairs = set()
+    seen_triples = set()
     for c in raw_courses:
         course_id = course_map.get(c["codigo"])
-        if not course_id:
+        career_id = career_map.get(c["carrera_sigla"])
+        if not course_id or not career_id:
             continue
         for req in c.get("correquisitos", []):
             req_id = course_map.get(req)
-            if req_id and (course_id, req_id) not in seen_pairs:
-                seen_pairs.add((course_id, req_id))
-                coreqs.append((course_id, req_id, "correquisito"))
-
-    if not coreqs:
-        log.info("  ✓ 0 correquisitos para insertar")
-        return
+            if req_id and (course_id, req_id, career_id) not in seen_triples:
+                seen_triples.add((course_id, req_id, career_id))
+                coreqs.append((course_id, req_id, "correquisito", career_id))
 
     with conn.cursor() as cur:
-        execute_values(
-            cur,
-            """
-            INSERT INTO prerrequisito (id_curso, id_curso_requerido, tipo)
-            VALUES %s
-            ON CONFLICT (id_curso, id_curso_requerido, tipo) DO NOTHING
-            """,
-            coreqs,
-        )
-    log.info(f"  ✓ {len(coreqs)} correquisitos insertados")
+        cur.execute("DELETE FROM prerrequisito WHERE tipo = 'correquisito'")
+        deleted = cur.rowcount
+        if coreqs:
+            execute_values(
+                cur,
+                """
+                INSERT INTO prerrequisito (id_curso, id_curso_requerido, tipo, id_carrera)
+                VALUES %s
+                ON CONFLICT (id_curso, id_curso_requerido, tipo, id_carrera) DO NOTHING
+                """,
+                coreqs,
+            )
+    log.info(f"  ✓ {len(coreqs)} correquisitos insertados ({deleted} filas viejas reemplazadas)")
 
 
 def _insert_cycle_range_prerequisites(conn, course_map: dict[str, int]):
@@ -497,6 +513,39 @@ def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int
                             """,
                             (section_id, day, start_time, end_time, classroom),
                         )
+
+    # Limpieza de secciones huérfanas: banner_*_202620.json es la fuente
+    # completa y autoritativa de lo que Banner ofrece HOY para este
+    # período -- si un NRC dejó de aparecer (cambió, se canceló, Banner
+    # renumeró la sección), la fila vieja en `seccion` queda huérfana
+    # para siempre porque este loader solo hace INSERT/UPDATE, nunca
+    # DELETE. Confirmado en producción: 17 secciones fantasma acumuladas
+    # (isi/itecad/topo, incluyendo generales), todas con banner_program
+    # real pero un NRC que ya no existe en ningún archivo actual -- un
+    # estudiante las veía en su oferta como si Banner las siguiera
+    # publicando. Se borran las que NO aparecen en `all_sections` de esta
+    # corrida, con scope estricto a `id_periodo` para no tocar períodos
+    # históricos que no se están recargando. Seguro para historial_curso
+    # (ON DELETE SET NULL en fk_historial_seccion): un curso ya
+    # matriculado no pierde su registro, solo la referencia a la sección
+    # específica si esta desaparece de Banner.
+    nrcs_vigentes = {sec["crn"] for sec in all_sections}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT nrc FROM seccion WHERE id_periodo = %s AND nrc <> ALL(%s)",
+            (period_id, list(nrcs_vigentes)),
+        )
+        nrcs_huerfanos = [row[0] for row in cur.fetchall()]
+        if nrcs_huerfanos:
+            cur.execute(
+                "DELETE FROM seccion WHERE id_periodo = %s AND nrc = ANY(%s)",
+                (period_id, nrcs_huerfanos),
+            )
+            log.info(
+                f"  ✓ {len(nrcs_huerfanos)} secciones huérfanas eliminadas "
+                f"(ya no están en ningún banner_*.json): {', '.join(nrcs_huerfanos)}"
+            )
+
     return dict(sections_by_code)
 
 
@@ -710,11 +759,11 @@ def run():
 
         # 3. Prerrequisitos
         log.info("\n▶ Inserting prerequisites...")
-        _insert_prerequisites(conn, course_map)
+        _insert_prerequisites(conn, course_map, career_map)
 
         # 3b. Correquisitos (misma tabla, tipo='correquisito')
         log.info("\n▶ Inserting corequisites...")
-        _insert_corequisites(conn, course_map)
+        _insert_corequisites(conn, course_map, career_map)
 
         # 3c. Prerequisitos de rango de ciclos (TGF425/TGF426, tabla V5)
         log.info("\n▶ Inserting cycle-range prerequisites...")

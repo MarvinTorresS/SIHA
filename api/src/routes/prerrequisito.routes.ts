@@ -17,13 +17,19 @@ const router = Router();
  * Cualquier otro valor (o el parámetro ausente) mantiene el árbol
  * completo de siempre.
  *
+ * ?carrera=sigla (ej. "topo") acota los prerrequisitos a los que aplican
+ * a esa carrera -- un curso compartido entre carreras (ej. MAT002) puede
+ * tener requisitos distintos según la carrera. Sin este parámetro se
+ * devuelve la unión de todas las carreras (comportamiento previo).
+ *
  * Devuelve 404 si el curso no existe en la base de datos.
  */
 router.get("/:curso", async (req: Request, res: Response) => {
   try {
     const codigo = (req.params as Record<string, string>).curso.toUpperCase();
     const maxDepth = req.query.profundidad === "directo" ? 1 : undefined;
-    const tree = await getPrerequisiteTree(codigo, maxDepth);
+    const carrera = typeof req.query.carrera === "string" ? req.query.carrera : undefined;
+    const tree = await getPrerequisiteTree(codigo, maxDepth, carrera);
 
     if (!tree) {
       res.status(404).json({

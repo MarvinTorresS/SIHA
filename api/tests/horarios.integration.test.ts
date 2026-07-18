@@ -8,7 +8,7 @@ describe("POST /api/horarios/validar", () => {
   it("detecta conflicto entre dos NRCs reales (mismo día, mismo horario)", async () => {
     const res = await request(app)
       .post("/api/horarios/validar")
-      .send({ nrcs: ["50884", "50912"] });  // EIF200 + EIF400, viernes 13:00
+      .send({ nrcs: ["50889", "50918"] });  // EIF204 + EIF407, viernes 08:00-11:20 se solapan
 
     expect(res.status).toBe(200);
     expect(res.body.tieneConflictos).toBe(true);
@@ -21,7 +21,7 @@ describe("POST /api/horarios/validar", () => {
   it("no detecta conflicto para un solo NRC", async () => {
     const res = await request(app)
       .post("/api/horarios/validar")
-      .send({ nrcs: ["50872"] });  // MAT002
+      .send({ nrcs: ["51081"] });  // MAT002
 
     expect(res.status).toBe(200);
     expect(res.body.tieneConflictos).toBe(false);

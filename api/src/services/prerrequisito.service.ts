@@ -52,19 +52,37 @@ export interface PrerequisiteNode {
  *                     el comportamiento de siempre.
  * @param currentDepth profundidad del nodo actual, para comparar contra
  *                     maxDepth. La raíz es profundidad 0.
+ * @param careerId     id_carrera del contexto en el que se consulta (ej. la
+ *                     carrera seleccionada en la Malla, o la del estudiante
+ *                     en Mis Cursos). Un mismo curso compartido entre
+ *                     carreras (ej. MAT002) puede tener prerrequisitos
+ *                     DISTINTOS según la carrera -- ver id_carrera en
+ *                     prerrequisito. undefined = sin filtrar (unión de
+ *                     todas las carreras, comportamiento previo a este
+ *                     scoping), solo para llamadores que de verdad no
+ *                     tienen contexto de carrera. Se propaga igual a
+ *                     toda la recursión: el árbol completo de un curso se
+ *                     explora siempre dentro de la malla de una sola
+ *                     carrera.
  * @returns el árbol de prerrequisitos, o null si el curso no existe.
  */
 async function buildPrerequisiteTree(
   courseCode: string,
   visited: Set<string> = new Set(),
   maxDepth?: number,
-  currentDepth = 0
+  currentDepth = 0,
+  careerId?: number
 ): Promise<PrerequisiteNode | null> {
   const course = await prisma.curso.findUnique({
     where: { codigo: courseCode },
     include: {
       requisitosDe: {
-        where: { tipo: "prerequisito" },
+        where: {
+          tipo: "prerequisito",
+          ...(careerId !== undefined
+            ? { OR: [{ id_carrera: null }, { id_carrera: careerId }] }
+            : {}),
+        },
         include: {
           cursoRequerido: true,
         },
@@ -107,7 +125,8 @@ async function buildPrerequisiteTree(
         link.cursoRequerido.codigo,
         nextVisited,
         maxDepth,
-        currentDepth + 1
+        currentDepth + 1,
+        careerId
       );
       if (childNode) {
         requiredNodes.push(childNode);
@@ -138,12 +157,21 @@ async function buildPrerequisiteTree(
  * FIY423 <-> FIY423L) tiene dos filas que matchean el OR (una por cada
  * columna), y ambas resuelven al mismo curso del otro lado -- sin el
  * dedupe, el frontend dibujaría la misma línea dos veces.
+ *
+ * @param careerId  ver buildPrerequisiteTree -- mismo scoping por carrera.
+ *                  undefined = sin filtrar (unión de todas las carreras).
  */
-async function getDirectCorequisites(courseId: number): Promise<CorequisiteRef[]> {
+export async function getDirectCorequisites(
+  courseId: number,
+  careerId?: number
+): Promise<CorequisiteRef[]> {
   const rows = await prisma.prerrequisito.findMany({
     where: {
       tipo: "correquisito",
       OR: [{ id_curso: courseId }, { id_curso_requerido: courseId }],
+      ...(careerId !== undefined
+        ? { AND: [{ OR: [{ id_carrera: null }, { id_carrera: careerId }] }] }
+        : {}),
     },
     include: { curso: true, cursoRequerido: true },
   });
@@ -160,17 +188,69 @@ async function getDirectCorequisites(courseId: number): Promise<CorequisiteRef[]
   return Array.from(porCodigo.values());
 }
 
+export interface PrerequisiteRef {
+  code: string;
+  name: string;
+}
+
+/**
+ * Prerrequisitos DIRECTOS de un curso (tipo='prerequisito', un solo
+ * nivel) -- reutilizado por estudiante.service.ts (GET /oferta) para
+ * decidir "elegible" vs "bloqueado" sin construir el árbol recursivo
+ * completo, que no hace falta para esa comprobación.
+ *
+ * @param careerId  ver buildPrerequisiteTree -- mismo scoping por carrera.
+ *                  undefined = sin filtrar (unión de todas las carreras).
+ */
+export async function getDirectPrerequisites(
+  courseId: number,
+  careerId?: number
+): Promise<PrerequisiteRef[]> {
+  const rows = await prisma.prerrequisito.findMany({
+    where: {
+      id_curso: courseId,
+      tipo: "prerequisito",
+      ...(careerId !== undefined
+        ? { OR: [{ id_carrera: null }, { id_carrera: careerId }] }
+        : {}),
+    },
+    include: { cursoRequerido: true },
+  });
+  return rows.map((row) => ({
+    code: row.cursoRequerido.codigo,
+    name: row.cursoRequerido.nombre,
+  }));
+}
+
 /**
  * Devuelve el árbol de prerrequisitos de un curso por su código, con los
  * correquisitos directos del curso raíz agregados en `corequisitos`.
  * Corresponde a GET /api/prerrequisitos/{curso}.
  * Devuelve null si el curso no existe -- la ruta decide el status HTTP.
  *
- * @param maxDepth  ver buildPrerequisiteTree. undefined = árbol completo
- *                  (comportamiento por defecto, sin cambios).
+ * @param maxDepth      ver buildPrerequisiteTree. undefined = árbol
+ *                      completo (comportamiento por defecto, sin cambios).
+ * @param careerAcronym sigla de la carrera en cuyo contexto se consulta
+ *                      (ej. "topo"), usada para resolver el scoping por
+ *                      carrera de buildPrerequisiteTree. undefined = sin
+ *                      filtrar (comportamiento previo, unión de todas las
+ *                      carreras). Si la sigla no matchea ninguna carrera
+ *                      real se ignora silenciosamente (mismo efecto que
+ *                      no pasarla), en vez de fallar la consulta completa
+ *                      por un query param mal escrito.
  */
-export async function getPrerequisiteTree(courseCode: string, maxDepth?: number) {
-  const tree = await buildPrerequisiteTree(courseCode, undefined, maxDepth);
+export async function getPrerequisiteTree(
+  courseCode: string,
+  maxDepth?: number,
+  careerAcronym?: string
+) {
+  let careerId: number | undefined;
+  if (careerAcronym) {
+    const career = await prisma.carrera.findUnique({ where: { sigla: careerAcronym } });
+    careerId = career?.id_carrera;
+  }
+
+  const tree = await buildPrerequisiteTree(courseCode, undefined, maxDepth, 0, careerId);
   if (!tree) {
     return null;
   }
@@ -180,7 +260,7 @@ export async function getPrerequisiteTree(courseCode: string, maxDepth?: number)
     select: { id_curso: true },
   });
   if (rootCourse) {
-    tree.corequisitos = await getDirectCorequisites(rootCourse.id_curso);
+    tree.corequisitos = await getDirectCorequisites(rootCourse.id_curso, careerId);
   }
 
   return tree;

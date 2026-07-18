@@ -79,10 +79,6 @@ function CursoCard({
   desmarcando,
 }: CursoCardProps) {
   const area = resolverArea(curso.codigo)
-  // El switch alterna entre aprobado y pendiente/sin_seccion en ambas
-  // direcciones. "cursando" queda fuera de alcance -- trae una sección
-  // real matriculada, no algo que este control deba tocar.
-  const puedeAlternarse = curso.estado !== "cursando"
   const cambioPendiente = marcando || desmarcando
   // Slot genérico OPT{n} dentro de su ciclo real (ej. "Cuarto Año - I
   // Ciclo"), distinto del catálogo "Optativos" (cicloId="Opt") que lista
@@ -153,42 +149,45 @@ function CursoCard({
               )}
             </div>
 
-            {puedeAlternarse && (
-              // stopPropagation: interactuar con el switch no debe además
-              // togglear el resaltado de prerrequisitos (el click
-              // bubblearía hasta el onClick de la Card de arriba).
-              <label
-                onClick={(e) => e.stopPropagation()}
-                className="flex items-center justify-between gap-2 pt-1 border-t border-border/60 text-xs cursor-pointer"
-              >
-                <span>
-                  {marcando
-                    ? "Guardando..."
-                    : desmarcando
-                      ? "Deshaciendo..."
-                      : curso.estado === "aprobado"
-                        ? "Aprobado"
-                        : "Marcar como aprobado"}
-                </span>
-                {/* checked refleja el estado real del curso (no un estado
-                    local propio): togglear llama a marcar o desmarcar
-                    según corresponda, y la card se re-renderiza con el
-                    estado que vuelve del servidor tras invalidar la
-                    query. disabled también mientras el resaltado de
-                    prerrequisitos está activo, en CUALQUIER tarjeta, para
-                    evitar un miss-click sobre el switch al navegar el
-                    grafo resaltado. */}
-                <Switch
-                  checked={curso.estado === "aprobado"}
-                  disabled={cambioPendiente || highlightModeActive}
-                  onCheckedChange={(checked) => {
-                    if (checked) onMarcarAprobado(curso.codigo)
-                    else onDesmarcarAprobado(curso.codigo)
-                  }}
-                  className="data-[state=checked]:bg-success"
-                />
-              </label>
-            )}
+            {/* stopPropagation: interactuar con el switch no debe además
+                togglear el resaltado de prerrequisitos (el click
+                bubblearía hasta el onClick de la Card de arriba).
+                Disponible para cualquier estado -- incluido "cursando":
+                el flujo real es pendiente -> cursando -> aprobado, y el
+                estudiante debe poder confirmar la aprobación de un curso
+                que venía cursando (el backend ya hace upsert sobre la
+                fila existente, no la duplica). */}
+            <label
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center justify-between gap-2 pt-1 border-t border-border/60 text-xs cursor-pointer"
+            >
+              <span>
+                {marcando
+                  ? "Guardando..."
+                  : desmarcando
+                    ? "Deshaciendo..."
+                    : curso.estado === "aprobado"
+                      ? "Aprobado"
+                      : "Marcar como aprobado"}
+              </span>
+              {/* checked refleja el estado real del curso (no un estado
+                  local propio): togglear llama a marcar o desmarcar
+                  según corresponda, y la card se re-renderiza con el
+                  estado que vuelve del servidor tras invalidar la
+                  query. disabled también mientras el resaltado de
+                  prerrequisitos está activo, en CUALQUIER tarjeta, para
+                  evitar un miss-click sobre el switch al navegar el
+                  grafo resaltado. */}
+              <Switch
+                checked={curso.estado === "aprobado"}
+                disabled={cambioPendiente || highlightModeActive}
+                onCheckedChange={(checked) => {
+                  if (checked) onMarcarAprobado(curso.codigo)
+                  else onDesmarcarAprobado(curso.codigo)
+                }}
+                className="data-[state=checked]:bg-success"
+              />
+            </label>
           </CardContent>
         </Card>
       </TooltipTrigger>
@@ -373,8 +372,10 @@ export function MallaPage() {
   // Resaltado in-place de prerrequisitos: qué tarjeta está activa, cuáles
   // son sus prerrequisitos directos y las líneas que las conectan.
   // Disponible en cualquier carrera, no depende del historial del
-  // estudiante logueado.
-  const prereqHighlight = usePrerequisiteHighlight()
+  // estudiante logueado -- pero sí se acota a carreraSeleccionada, porque
+  // un curso compartido entre carreras (ej. MAT002) puede tener
+  // prerrequisitos distintos según la carrera.
+  const prereqHighlight = usePrerequisiteHighlight(carreraSeleccionada)
 
   // La malla con progreso (estado/nota/sección) solo existe para la
   // carrera real del estudiante logueado -- viene de su historial_curso.

@@ -58,8 +58,18 @@ function edgePoint(
  * posiciones reales de las tarjetas en el DOM, las líneas que las
  * conectan. Disponible para cualquier carrera -- solo lee estructura
  * curricular, no depende del historial del estudiante.
+ *
+ * @param carreraSigla  carrera cuya malla se está mostrando (ej. "topo").
+ *                      Acota los prerrequisitos del curso activo a los de
+ *                      esa carrera -- un curso compartido entre carreras
+ *                      (ej. MAT002) puede tener requisitos distintos según
+ *                      la carrera. Sin esto, un prerrequisito real de otra
+ *                      carrera (ej. MAT030, exclusivo de ISI) simplemente
+ *                      no tenía tarjeta en el DOM de TOPO y la línea se
+ *                      descartaba en silencio -- parecía "correcto" por
+ *                      accidente, no porque el dato ya viniera filtrado.
  */
-export function usePrerequisiteHighlight() {
+export function usePrerequisiteHighlight(carreraSigla?: string) {
   const [activeCourseCode, setActiveCourseCode] = useState<string | null>(null)
 
   const {
@@ -67,8 +77,8 @@ export function usePrerequisiteHighlight() {
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["prerrequisitos-directos", activeCourseCode],
-    queryFn: () => prerequisitosService.obtenerDirectos(activeCourseCode!),
+    queryKey: ["prerrequisitos-directos", activeCourseCode, carreraSigla],
+    queryFn: () => prerequisitosService.obtenerDirectos(activeCourseCode!, carreraSigla),
     enabled: !!activeCourseCode,
   })
 

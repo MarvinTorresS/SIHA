@@ -17,6 +17,11 @@ interface HorarioState {
   agregarSeccionManual: (seccion: Seccion) => Promise<void>
   removerSeccionManual: (nrc: string) => Promise<void>
   reemplazarSeccionManual: (nrcAnterior: string, nuevaSeccion: Seccion) => Promise<void>
+  /** Vacía solo el borrador manual (no las fijas) -- se usa al confirmar
+   * matrícula: esos cursos van a recargarse como fijos ("cursando") en
+   * el próximo refetch de la oferta, no deben seguir contados como
+   * manuales o se duplicarían en el calendario. */
+  limpiarSeccionesManuales: () => void
   validar: () => Promise<void>
   reset: () => void
 
@@ -79,6 +84,11 @@ export const useHorarioStore = create<HorarioState>((set, get) => ({
         .concat(nuevaSeccion),
     })
     await get().validar()
+  },
+
+  limpiarSeccionesManuales: () => {
+    set({ seccionesManuales: [] })
+    get().validar()
   },
 
   validar: async () => {

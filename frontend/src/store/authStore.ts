@@ -3,6 +3,7 @@ import type { Estudiante } from "@/types/academico"
 import type { LoginRequest, RegistroRequest } from "@/types/auth"
 import { authService } from "@/services/auth.service"
 import { TOKEN_STORAGE_KEY } from "@/services/api"
+import { useCarreraStore } from "@/store/carreraStore"
 
 interface AuthState {
   estudiante: Estudiante | null
@@ -25,12 +26,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     const sesion = await authService.login(datos)
     localStorage.setItem(TOKEN_STORAGE_KEY, sesion.token)
     set({ estudiante: sesion.estudiante, isAuthenticated: true })
+    useCarreraStore.getState().setCarreraSeleccionada(sesion.estudiante.carrera.sigla)
   },
 
   registrar: async (datos) => {
     const sesion = await authService.registrar(datos)
     localStorage.setItem(TOKEN_STORAGE_KEY, sesion.token)
     set({ estudiante: sesion.estudiante, isAuthenticated: true })
+    useCarreraStore.getState().setCarreraSeleccionada(sesion.estudiante.carrera.sigla)
   },
 
   logout: () => {
@@ -47,6 +50,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const { estudiante } = await authService.me()
       set({ estudiante, isAuthenticated: true, isHydrating: false })
+      useCarreraStore.getState().setCarreraSeleccionada(estudiante.carrera.sigla)
     } catch {
       // Token vencido/inválido -- se limpia para no reintentar en cada request.
       localStorage.removeItem(TOKEN_STORAGE_KEY)

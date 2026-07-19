@@ -65,8 +65,16 @@ function CursoMatriculadoCard({ curso }: { curso: CursoConProgreso }) {
   return (
     <Card className={`border-t-4 ${area.borderClassName}`}>
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-1.5 flex-wrap">
+        {/* flex-wrap en la fila + min-w-0 en el grupo izquierdo: sin
+            min-w-0, el div de badges no tiene piso de achique explícito
+            y usa su min-content real como floor -- con el badge de área
+            "Estudios generales" (el label más largo) eso puede seguir
+            siendo más ancho que lo disponible en la card, y sin
+            flex-wrap en la fila exterior no hay a dónde caer: el badge
+            de estado (shrink-0 por Badge base) queda empujado fuera del
+            borde derecho en vez de bajar a una línea nueva. */}
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5 flex-wrap">
             <Badge variant="outline" className="text-xs font-mono">
               {codigoVisible(curso.codigo)}
             </Badge>
@@ -77,8 +85,8 @@ function CursoMatriculadoCard({ curso }: { curso: CursoConProgreso }) {
           <EstadoBadge estado={curso.estado} />
         </div>
 
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-medium leading-tight">{curso.nombre}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="min-w-0 flex-1 text-sm font-medium leading-tight">{curso.nombre}</p>
           <span className="text-xs text-muted-foreground shrink-0">
             {curso.creditos} cr
           </span>
@@ -142,8 +150,18 @@ export function DashboardPage() {
   })
 
   const todosLosCursos = progreso?.semestres.flatMap((s) => s.cursos) ?? []
+  // GEN{n}_{sigla} ("Estudios Generales I/II/III/IV") es un slot genérico
+  // de la malla que la API autocompleta con el estado del curso real de
+  // generales (ej. EGA121) que lo cubre -- ver getMallaProgreso. Un slot
+  // en "cursando" SIEMPRE es ese autocompletado (nunca se matricula un
+  // NRC real contra un código GEN*, no existe en Banner), así que
+  // mostrarlo acá además del curso real que ya aparece sería la misma
+  // matrícula duplicada. "sin_seccion" sí se deja: significa que el
+  // slot de este ciclo todavía no está cubierto por ningún general real.
+  const esSlotGeneralCubierto = (c: CursoConProgreso) =>
+    /^GEN\d+_/.test(c.codigo) && c.estado === "cursando"
   const cursosMatriculados = todosLosCursos.filter(
-    (c) => c.estado === "cursando" || c.estado === "sin_seccion"
+    (c) => (c.estado === "cursando" || c.estado === "sin_seccion") && !esSlotGeneralCubierto(c)
   )
   const creditosCicloActual = cursosMatriculados.reduce(
     (sum, c) => sum + Number(c.creditos),
@@ -166,11 +184,7 @@ export function DashboardPage() {
     <>
       <Header
         title="Dashboard"
-        description={
-          estudiante
-            ? `${estudiante.carrera.nombre} · ${estudiante.cicloActualId || "sin ciclo asignado"}`
-            : undefined
-        }
+        description={estudiante?.carrera.nombre}
       />
       <main className="flex-1 p-4 md:p-6 space-y-6">
         {error && (
@@ -245,16 +259,30 @@ export function DashboardPage() {
             </div>
 
             <Card>
-              <CardHeader className="flex-row items-center justify-between space-y-0">
+              {/* flex, no solo flex-row: CardHeader trae "grid" en su
+                  clase base (card.tsx) -- "grid" y "flex-row" son grupos
+                  de conflicto DISTINTOS para Tailwind (display vs
+                  flex-direction), así que "flex-row" solo nunca lo
+                  reemplazaba. El resultado real era grid de una sola
+                  columna implícita: título y "Ver malla" apilados en
+                  filas separadas, no lado a lado como el nombre de la
+                  clase sugiere -- bug preexistente, no algo que rompieran
+                  los cambios de columnas de esta tarea. */}
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <div>
                   <CardTitle>Avance en la malla</CardTitle>
                   <p className="text-sm text-muted-foreground mt-1">
                     {progreso.carrera.nombre}
                   </p>
                 </div>
+                {/* -my-3 py-3: agranda el área táctil real a ~44px de
+                    alto sin empujar el layout visual (el padding extra
+                    se compensa con el margen negativo) -- el texto solo
+                    medía ~20px de alto antes, por debajo del mínimo
+                    táctil cómodo. */}
                 <Link
                   to="/malla"
-                  className="text-sm font-medium text-primary flex items-center gap-1 hover:underline shrink-0"
+                  className="-my-3 flex shrink-0 items-center gap-1 py-3 text-sm font-medium text-primary hover:underline"
                 >
                   Ver malla <ChevronRight className="size-4" />
                 </Link>
@@ -279,7 +307,6 @@ export function DashboardPage() {
               <CardHeader>
                 <CardTitle>Cursos matriculados actualmente</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {estudiante?.cicloActualId || "Sin ciclo asignado"} ·{" "}
                   {cursosMatriculados.length} cursos · {creditosCicloActual} créditos
                 </p>
               </CardHeader>

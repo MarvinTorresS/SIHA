@@ -12,6 +12,15 @@ export interface AreaConfig {
   label: string
   borderClassName: string
   badgeClassName: string
+  /** Color sólido del área (mismo tono que borderClassName, sin el prefijo
+   * "border-t-"), para el punto de la leyenda de áreas en mobile
+   * (LeyendaAreas, MallaPage.tsx). Literal a propósito -- Tailwind resuelve
+   * clases por escaneo estático del código fuente, así que un
+   * `borderClassName.replace("border-t-", "bg-")` armado en runtime nunca
+   * genera la regla CSS de esa clase (el string "bg-area-x" no aparece en
+   * ningún archivo tal cual, JIT no la ve). El punto salía sin color por
+   * exactamente esto. */
+  dotClassName: string
 }
 
 const AREA_CONFIG: Record<string, AreaConfig> = {
@@ -19,21 +28,25 @@ const AREA_CONFIG: Record<string, AreaConfig> = {
     label: "Matemática",
     borderClassName: "border-t-area-matematica",
     badgeClassName: "bg-area-matematica-bg text-area-matematica",
+    dotClassName: "bg-area-matematica",
   },
   EIF: {
     label: "Informática",
     borderClassName: "border-t-area-informatica",
     badgeClassName: "bg-area-informatica-bg text-area-informatica",
+    dotClassName: "bg-area-informatica",
   },
   LIX: {
     label: "Inglés",
     borderClassName: "border-t-area-ingles",
     badgeClassName: "bg-area-ingles-bg text-area-ingles",
+    dotClassName: "bg-area-ingles",
   },
   GEN: {
     label: "Estudios generales",
     borderClassName: "border-t-area-generales",
     badgeClassName: "bg-area-generales-bg text-area-generales",
+    dotClassName: "bg-area-generales",
   },
   // Códigos reales de Estudios Generales en Banner (EGF/EGC/EGS/EGA),
   // distintos de los placeholders GEN{n}_{SIGLA} que genera excel_loader.py
@@ -45,26 +58,31 @@ const AREA_CONFIG: Record<string, AreaConfig> = {
     label: "Estudios generales",
     borderClassName: "border-t-area-generales",
     badgeClassName: "bg-area-generales-bg text-area-generales",
+    dotClassName: "bg-area-generales",
   },
   EGC: {
     label: "Estudios generales",
     borderClassName: "border-t-area-generales",
     badgeClassName: "bg-area-generales-bg text-area-generales",
+    dotClassName: "bg-area-generales",
   },
   EGS: {
     label: "Estudios generales",
     borderClassName: "border-t-area-generales",
     badgeClassName: "bg-area-generales-bg text-area-generales",
+    dotClassName: "bg-area-generales",
   },
   EGA: {
     label: "Estudios generales",
     borderClassName: "border-t-area-generales",
     badgeClassName: "bg-area-generales-bg text-area-generales",
+    dotClassName: "bg-area-generales",
   },
   OPT: {
     label: "Optativa",
     borderClassName: "border-t-area-optativa",
     badgeClassName: "bg-area-optativa-bg text-area-optativa",
+    dotClassName: "bg-area-optativa",
   },
 }
 
@@ -72,6 +90,7 @@ const AREA_DEFAULT: AreaConfig = {
   label: "General",
   borderClassName: "border-t-area-general",
   badgeClassName: "bg-area-general-bg text-area-general",
+  dotClassName: "bg-area-general",
 }
 
 /** Resuelve el área visual de un curso a partir de su código (ej. "EIF200"). */

@@ -104,6 +104,15 @@
      de "Cursando" (--estado-cursando), para no pisar esos significados. */
   --prereq-link: #3b82f6;
 
+  /* Outline del modo edición ("Marcar cursos aprobados" en la malla) --
+     gris neutro (mismo valor que --foreground, para contraste máximo
+     garantizado contra --card en cada tema -- --muted-foreground se
+     probó primero pero quedaba casi invisible en dark), a propósito NO
+     --primary: un borde en Rojo UNA sobre las cards se lee como
+     error/alerta, no como "modo de selección activo" -- ver regla de
+     diseño arriba sobre no usar el rojo institucional para eso. */
+  --edit-mode-ring: #0a0a0a;
+
   --sidebar: #fafafa;
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #ea0029;
@@ -192,6 +201,8 @@
 
   --prereq-link: #60a5fa;
 
+  --edit-mode-ring: #f4f4f5;
+
   --sidebar: #18181b;
   --sidebar-foreground: #f4f4f5;
   --sidebar-primary: #ea0029;
@@ -250,6 +261,7 @@
   --color-area-general: var(--area-general);
   --color-area-general-bg: var(--area-general-bg);
   --color-prereq-link: var(--prereq-link);
+  --color-edit-mode-ring: var(--edit-mode-ring);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

@@ -11,6 +11,7 @@ import { RegistroPage } from "@/pages/RegistroPage"
 import { useAuthStore } from "@/store/authStore"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { Toaster } from "@/components/ui/sonner"
 
 /**
  * Envuelve las rutas autenticadas: intenta hidratar la sesión desde el
@@ -44,6 +45,7 @@ function RequireAuth() {
 function App() {
   return (
     <TooltipProvider>
+      <Toaster position="bottom-right" />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

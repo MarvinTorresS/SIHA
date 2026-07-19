@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CheckCircle2, Search } from "lucide-react"
+import { Link } from "react-router-dom"
+import { CheckCircle2, ChevronRight, Search } from "lucide-react"
 import { Header } from "@/components/layout/Header"
 import { Input } from "@/components/ui/input"
 import {
@@ -14,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CursoOfertaCard } from "@/components/mis-cursos/CursoOfertaCard"
 import { CalendarioSemanal } from "@/components/mis-cursos/CalendarioSemanal"
 import { useAuthStore } from "@/store/authStore"
@@ -73,6 +75,19 @@ export function MisCursosPage() {
   const invalidarOferta = () =>
     queryClient.invalidateQueries({ queryKey: ["oferta-ciclo", estudiante?.carnet] })
 
+  // Tras confirmar, el mini-calendario se reemplaza por el CTA "Ver mi
+  // horario" -- el estudiante decide cuándo navegar, sin redirect
+  // automático. Se apaga solo si vuelve a armar un borrador nuevo
+  // (seccionesManuales > 0 otra vez): no hace falta un efecto aparte,
+  // la condición de render ya lo cubre (ver más abajo).
+  const [matriculaRecienConfirmada, setMatriculaRecienConfirmada] = useState(false)
+
+  // <xl (tablet/mobile): "Cursos" y "Horario" son tabs, una a la vez.
+  // ≥xl: ambas se fuerzan visibles como paneles simultáneos (ver
+  // TabsContent con forceMount + xl:data-[state=inactive]:block más
+  // abajo) -- tabActiva solo importa por debajo de xl.
+  const [tabActiva, setTabActiva] = useState<"cursos" | "horario">("cursos")
+
   const confirmarMatriculaMutation = useMutation({
     mutationFn: (nrcs: string[]) =>
       estudianteService.confirmarMatricula(estudiante!.carnet, nrcs),
@@ -83,6 +98,14 @@ export function MisCursosPage() {
       // mismos cursos ya con estado "cursando".
       limpiarSeccionesManuales()
       invalidarOferta()
+      setMatriculaRecienConfirmada(true)
+      // Cambio de tab, no navegación de ruta -- no choca con "sin
+      // redirect automático" (ese principio es sobre cruzar a /horario,
+      // ver el Link "Ver mi horario" más abajo, que sigue intacto). Es
+      // solo mostrar el resultado en la misma página sin que el
+      // estudiante tenga que buscar la tab a mano. No tiene efecto
+      // visual en ≥xl (ambos paneles ya están siempre visibles ahí).
+      setTabActiva("horario")
     },
   })
 
@@ -168,9 +191,30 @@ export function MisCursosPage() {
           </Alert>
         )}
 
-        <div className="grid grid-cols-1 xl:grid-cols-[560px_1fr] gap-4 items-start">
+        {/* <xl: "Cursos" y "Horario" son tabs (una a la vez, el layout de
+            2 paneles simultáneos no entra cómodo por debajo de esto).
+            ≥xl: mismo árbol de Tabs, pero ambos TabsContent se fuerzan
+            visibles a la vez como paneles fijo + grande (forceMount +
+            xl:data-[state=inactive]:block) -- un solo CalendarioSemanal
+            en el DOM en cualquier breakpoint, no dos copias ocultas con
+            CSS. TabsList (el selector de tabs) se oculta en xl porque ya
+            no hace falta elegir, se ven las dos. */}
+        <Tabs
+          value={tabActiva}
+          onValueChange={(v) => setTabActiva(v as "cursos" | "horario")}
+          className="gap-4 xl:grid xl:grid-cols-[560px_1fr] xl:items-start"
+        >
+          <TabsList className="grid w-full grid-cols-2 xl:hidden">
+            <TabsTrigger value="cursos">Cursos</TabsTrigger>
+            <TabsTrigger value="horario">Horario</TabsTrigger>
+          </TabsList>
+
           {/* Panel izquierdo: filtros + lista */}
-          <div className="space-y-3 min-w-0">
+          <TabsContent
+            value="cursos"
+            forceMount
+            className="space-y-3 min-w-0 data-[state=inactive]:hidden xl:data-[state=inactive]:block"
+          >
             <div className="space-y-2">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -262,13 +306,45 @@ export function MisCursosPage() {
                 ))}
               </div>
             )}
-          </div>
+          </TabsContent>
 
-          {/* Panel derecho: calendario, fijo y grande */}
-          <div className="xl:sticky xl:top-20 min-w-0">
-            <CalendarioSemanal />
-          </div>
-        </div>
+          {/* Panel derecho: calendario, fijo y grande -- o, recién
+              confirmada la matrícula, el CTA a Mi Horario en su lugar
+              (sin redirect automático a esa ruta, el estudiante hace
+              click cuando quiera -- el cambio de tab de arriba es aparte,
+              es solo mostrar este panel, no navegar). Vuelve a mostrar
+              el calendario apenas arma un borrador nuevo
+              (seccionesManuales > 0 otra vez). xl:sticky/xl:top-20 solo
+              importa en el layout de 2 paneles (≥xl); por debajo de eso
+              es una tab normal, sin necesidad de quedarse pegada. */}
+          <TabsContent
+            value="horario"
+            forceMount
+            className="min-w-0 data-[state=inactive]:hidden xl:data-[state=inactive]:block xl:sticky xl:top-20"
+          >
+            {matriculaRecienConfirmada && seccionesManuales.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
+                  <CheckCircle2 className="size-10 text-success" />
+                  <div className="space-y-1">
+                    <p className="font-semibold">Matrícula confirmada</p>
+                    <p className="text-sm text-muted-foreground">
+                      Tus cursos ya quedaron registrados como "Cursando".
+                    </p>
+                  </div>
+                  <Link
+                    to="/horario"
+                    className="text-sm font-medium text-primary flex items-center gap-1 hover:underline"
+                  >
+                    Ver mi horario <ChevronRight className="size-4" />
+                  </Link>
+                </CardContent>
+              </Card>
+            ) : (
+              <CalendarioSemanal />
+            )}
+          </TabsContent>
+        </Tabs>
       </main>
     </>
   )

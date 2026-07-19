@@ -195,3 +195,125 @@ describe("POST /api/estudiantes/:carnet/matricula", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("GET /api/estudiantes/:carnet/secciones-cursando", () => {
+  let idEstudianteConSeccion: number;
+  let idCurso: number;
+  let codigoCurso: string;
+  let nrcReal: string;
+  let tokenConSeccion: string;
+
+  let tokenSinSecciones: string;
+  const CARNET_SIN_SECCIONES = `${CARNET_TEST}-VACIO`;
+  const CARNET_CON_SECCION = `${CARNET_TEST}-HOR`;
+
+  beforeAll(async () => {
+    const carreraIsi = await prisma.carrera.findUniqueOrThrow({
+      where: { sigla: "isi" },
+    });
+
+    const periodoActivo = await prisma.periodo.findFirstOrThrow({
+      where: { activo: true },
+    });
+
+    // Mismo criterio que el describe de matrícula: un curso real de isi
+    // con al menos una sección ofertada en el período activo.
+    const cc = await prisma.curso_carrera.findFirstOrThrow({
+      where: {
+        id_carrera: carreraIsi.id_carrera,
+        curso: {
+          seccion: { some: { id_periodo: periodoActivo.id_periodo } },
+        },
+      },
+      include: {
+        curso: { include: { seccion: { where: { id_periodo: periodoActivo.id_periodo } } } },
+      },
+    });
+    idCurso = cc.curso.id_curso;
+    codigoCurso = cc.curso.codigo;
+    nrcReal = cc.curso.seccion[0].nrc;
+
+    const estudianteConSeccion = await prisma.estudiante.create({
+      data: {
+        carnet: CARNET_CON_SECCION,
+        nombre: "Estudiante de Prueba (secciones-cursando, con sección)",
+        correo: `${CARNET_CON_SECCION}@test.una.ac.cr`,
+        id_carrera: carreraIsi.id_carrera,
+        password_hash: "no-aplica-en-este-test",
+      },
+    });
+    idEstudianteConSeccion = estudianteConSeccion.id_estudiante;
+
+    const seccionReal = await prisma.seccion.findFirstOrThrow({ where: { nrc: nrcReal } });
+    await prisma.historial_curso.create({
+      data: {
+        id_estudiante: idEstudianteConSeccion,
+        id_curso: idCurso,
+        estado: "cursando",
+        id_seccion: seccionReal.id_seccion,
+        id_periodo: periodoActivo.id_periodo,
+      },
+    });
+
+    await prisma.estudiante.create({
+      data: {
+        carnet: CARNET_SIN_SECCIONES,
+        nombre: "Estudiante de Prueba (secciones-cursando, sin secciones)",
+        correo: `${CARNET_SIN_SECCIONES}@test.una.ac.cr`,
+        id_carrera: carreraIsi.id_carrera,
+        password_hash: "no-aplica-en-este-test",
+      },
+    });
+
+    tokenConSeccion = tokenPara(CARNET_CON_SECCION, carreraIsi.sigla);
+    tokenSinSecciones = tokenPara(CARNET_SIN_SECCIONES, carreraIsi.sigla);
+  });
+
+  afterAll(async () => {
+    await prisma.estudiante.delete({ where: { carnet: CARNET_CON_SECCION } });
+    await prisma.estudiante.delete({ where: { carnet: CARNET_SIN_SECCIONES } });
+  });
+
+  it("devuelve la sección real del curso 'cursando', con curso/profesor/horarios resueltos", async () => {
+    const res = await request(app)
+      .get(`/api/estudiantes/${CARNET_CON_SECCION}/secciones-cursando`)
+      .set("Authorization", `Bearer ${tokenConSeccion}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+
+    const seccion = res.body[0];
+    expect(seccion.nrc).toBe(nrcReal);
+    expect(seccion.codigoCurso).toBe(codigoCurso);
+    expect(typeof seccion.titulo).toBe("string");
+    expect(seccion.titulo.length).toBeGreaterThan(0);
+    expect(Array.isArray(seccion.horarios)).toBe(true);
+    // profesor puede venir "" si la sección real no tiene profesor
+    // asignado en los datos de prueba -- el campo debe existir igual.
+    expect(typeof seccion.profesor).toBe("string");
+  });
+
+  it("responde un array vacío si el estudiante no tiene ninguna sección confirmada", async () => {
+    const res = await request(app)
+      .get(`/api/estudiantes/${CARNET_SIN_SECCIONES}/secciones-cursando`)
+      .set("Authorization", `Bearer ${tokenSinSecciones}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("responde 403 si el carnet de la URL no coincide con el del JWT", async () => {
+    const res = await request(app)
+      .get(`/api/estudiantes/${CARNET_SIN_SECCIONES}/secciones-cursando`)
+      .set("Authorization", `Bearer ${tokenConSeccion}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("responde 401 sin token", async () => {
+    const res = await request(app).get(
+      `/api/estudiantes/${CARNET_CON_SECCION}/secciones-cursando`
+    );
+    expect(res.status).toBe(401);
+  });
+});

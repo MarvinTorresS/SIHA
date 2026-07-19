@@ -146,11 +146,30 @@ export async function getMallaProgreso(
     include: { curso: true },
     orderBy: [{ ciclo_id: "asc" }, { curso: { codigo: "asc" } }],
   });
-  const cursos = cursosCarrera.map((cc) => ({
+  const cursosDeCarrera = cursosCarrera.map((cc) => ({
     ...cc.curso,
     ciclo_id: cc.ciclo_id,
     ciclo_nombre: cc.ciclo_nombre,
   }));
+
+  // Estudios Generales (EGF/EGC/EGS/EGA): igual que en getOfertaCiclo,
+  // NUNCA viven en curso_carrera -- se agregan aparte, agrupadas bajo un
+  // ciclo sintético "Estudios Generales" (no el ciclo_id="Opt" que traen
+  // en `curso` desde populate_db.py, reservado para el catálogo real de
+  // electivas). Sin esto, un curso general que el estudiante ya está
+  // cursando o aprobó no aparecía en la malla ni en el dashboard --
+  // getMallaProgreso solo consultaba curso_carrera. No cuentan para el
+  // avance de carrera (creditosTotalesCarrera/creditosAprobados): son
+  // compartidos entre carreras, no parte de esta malla específica (ver
+  // exclusión más abajo, misma que ya existe para "Opt").
+  const generales = await prisma.curso.findMany({ where: { es_general: true } });
+  const cursosGenerales = generales.map((g) => ({
+    ...g,
+    ciclo_id: "General",
+    ciclo_nombre: "Estudios Generales",
+  }));
+
+  const cursos = [...cursosDeCarrera, ...cursosGenerales];
 
   // Historial del estudiante, con la sección real (si existe) incluyendo
   // profesor y bloques horarios. Indexado por id_curso para lookup O(1).
@@ -233,6 +252,48 @@ export async function getMallaProgreso(
     };
   });
 
+  // Auto-completar los slots genéricos GEN{n}_{sigla} (creados por
+  // excel_loader.py, regla 4: "Estudios Generales I/II/III/IV" sin
+  // código Banner propio, namespaced por carrera porque curso.codigo es
+  // UNIQUE) con el estado real de los cursos de generales (es_general=
+  // true) que el estudiante haya matriculado/aprobado -- a diferencia de
+  // un slot OPT{n} (donde cualquiera de ~13 electivas con prerrequisitos
+  // distintos podría llenarlo, así que no se resuelve solo), un curso de
+  // generales SIEMPRE cubre cualquier slot GEN{n} de la carrera, así que
+  // sí hay una relación 1:1 segura que resolver automáticamente: primer
+  // slot libre <- primer curso de generales cursado, en orden estable.
+  // Sin esto, un estudiante que matricula EGA121 desde Mis Cursos ve esa
+  // tarjeta real como "Cursando" en la sección aparte, pero el slot
+  // GEN3_ISI de su malla (que es el que realmente cuenta el crédito de
+  // la carrera) se queda en "Pendiente" para siempre.
+  // Solo se autocompletan los slots SIN historial propio -- si el
+  // estudiante ya marcó GEN1_ISI/GEN2_ISI como aprobado a mano (fila
+  // real en historial_curso para ese id_curso puntual), esa decisión
+  // manual no se pisa; el autocompletado solo llena los que quedan
+  // "libres" (pendiente/sin_seccion), que es lo que realmente estaba
+  // roto: GEN3_ISI/GEN4_ISI atascados en pendiente pese a la matrícula
+  // real.
+  const slotsGenerales = cursosConProgreso
+    .filter((c) => /^GEN\d+_/.test(c.codigo) && !historialPorCurso.has(c.idCurso))
+    .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+
+  const codigosGeneralesReales = new Set(cursosGenerales.map((g) => g.codigo));
+  const generalesCursados = cursosConProgreso
+    .filter((c) => codigosGeneralesReales.has(c.codigo))
+    .filter((c) => c.estado === "aprobado" || c.estado === "cursando")
+    .sort((a, b) => {
+      if (a.estado !== b.estado) return a.estado === "aprobado" ? -1 : 1;
+      return a.codigo.localeCompare(b.codigo);
+    });
+
+  for (let i = 0; i < Math.min(slotsGenerales.length, generalesCursados.length); i++) {
+    const slot = slotsGenerales[i];
+    const fuente = generalesCursados[i];
+    slot.estado = fuente.estado;
+    slot.nota = fuente.nota;
+    slot.seccion = fuente.seccion;
+  }
+
   // Agrupación por ciclo, preservando el orden ya resuelto por la query
   // (ciclo_id asc). No se reordena aquí con compareCycleIds porque el
   // orden lexicográfico de "ciclo_id" en la BD ya coincide con el orden
@@ -256,14 +317,16 @@ export async function getMallaProgreso(
   // viven dentro de su ciclo real (ej. "Cuarto Año - I Ciclo") y ya suman
   // su crédito una vez cada uno. Se excluye del total para no contar ~13
   // electivas como si cada una fuera un curso requerido independiente.
-  const cursosRequeridos = cursos.filter((c) => c.ciclo_id !== "Opt");
+  const cursosRequeridos = cursos.filter(
+    (c) => c.ciclo_id !== "Opt" && c.ciclo_id !== "General"
+  );
   const creditosTotalesCarrera = cursosRequeridos.reduce(
     (sum, c) => sum + Number(c.creditos),
     0
   );
 
   const cursosAprobadosRequeridos = cursosConProgreso.filter(
-    (c) => c.estado === "aprobado" && c.cicloId !== "Opt"
+    (c) => c.estado === "aprobado" && c.cicloId !== "Opt" && c.cicloId !== "General"
   );
 
   // Créditos aprobados: se excluye el crédito del slot genérico OPT{n}
@@ -274,6 +337,7 @@ export async function getMallaProgreso(
   const creditosAprobados = cursosConProgreso
     .filter((c) => c.estado === "aprobado")
     .filter((c) => c.cicloId === "Opt" || !c.esOptativo)
+    .filter((c) => c.cicloId !== "General")
     .reduce((sum, c) => sum + Number(c.creditos), 0);
 
   return {
@@ -595,6 +659,56 @@ export async function confirmarMatricula(carnet: string, nrcs: string[]): Promis
 }
 
 /**
+ * Resuelve a qué curso real de generales (es_general=true) corresponde
+ * un slot GEN{n}_{sigla} sin historial propio, replicando el mismo
+ * emparejamiento estable que el autocompletado de getMallaProgreso
+ * (slot libre <- curso de generales cursado/aprobado, en orden). Se usa
+ * desde marcarCursoAprobado para que togglear el switch de un slot
+ * autocompletado actúe sobre el curso real (ej. EGA121), no sobre el
+ * slot -- si no, se crea una fila de historial huérfana para el código
+ * GEN* y el curso real (que sigue mostrándose aparte, ver bucket
+ * "General" en getMallaProgreso) se queda sin actualizar.
+ * Devuelve null si el slot no está cubierto por ningún curso real
+ * (caso legítimo: el estudiante no ha matriculado generales todavía).
+ */
+async function resolverCursoGeneralParaSlot(
+  idEstudiante: number,
+  idCarrera: number,
+  codigoSlot: string
+): Promise<{ id_curso: number } | null> {
+  const cursosCarrera = await prisma.curso_carrera.findMany({
+    where: { id_carrera: idCarrera },
+    include: { curso: true },
+  });
+  const historial = await prisma.historial_curso.findMany({
+    where: { id_estudiante: idEstudiante },
+  });
+  const historialPorCurso = new Map(historial.map((h) => [h.id_curso, h]));
+
+  const slotsLibres = cursosCarrera
+    .map((cc) => cc.curso)
+    .filter((c) => /^GEN\d+_/.test(c.codigo) && !historialPorCurso.has(c.id_curso))
+    .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+
+  const generales = await prisma.curso.findMany({ where: { es_general: true } });
+  const generalesCursados = generales
+    .filter((g) => {
+      const h = historialPorCurso.get(g.id_curso);
+      return h && (h.estado === "aprobado" || h.estado === "cursando");
+    })
+    .sort((a, b) => {
+      const estadoA = historialPorCurso.get(a.id_curso)!.estado;
+      const estadoB = historialPorCurso.get(b.id_curso)!.estado;
+      if (estadoA !== estadoB) return estadoA === "aprobado" ? -1 : 1;
+      return a.codigo.localeCompare(b.codigo);
+    });
+
+  const idx = slotsLibres.findIndex((s) => s.codigo === codigoSlot);
+  if (idx === -1 || idx >= generalesCursados.length) return null;
+  return generalesCursados[idx];
+}
+
+/**
  * Marca un curso como aprobado en el historial del estudiante --
  * ingresado por el propio estudiante, no sincronizado con el registro
  * oficial (ver disclaimer de "dato auto-reportado" en la UI). No hay
@@ -637,16 +751,40 @@ export async function marcarCursoAprobado(
     }
   }
 
+  // Un slot GEN{n} que todavía no tiene historial propio está siendo
+  // mostrado con el estado autocompletado de un curso real de generales
+  // (ver getMallaProgreso) -- togglearlo debe aprobar ese curso real, no
+  // crear una fila aparte para el placeholder.
+  let idCursoDestino = curso.id_curso;
+  if (/^GEN\d+_/.test(codigoCurso)) {
+    const historialPropio = await prisma.historial_curso.findUnique({
+      where: {
+        id_estudiante_id_curso: {
+          id_estudiante: estudiante.id_estudiante,
+          id_curso: curso.id_curso,
+        },
+      },
+    });
+    if (!historialPropio) {
+      const cursoReal = await resolverCursoGeneralParaSlot(
+        estudiante.id_estudiante,
+        estudiante.id_carrera,
+        codigoCurso
+      );
+      if (cursoReal) idCursoDestino = cursoReal.id_curso;
+    }
+  }
+
   await prisma.historial_curso.upsert({
     where: {
       id_estudiante_id_curso: {
         id_estudiante: estudiante.id_estudiante,
-        id_curso: curso.id_curso,
+        id_curso: idCursoDestino,
       },
     },
     create: {
       id_estudiante: estudiante.id_estudiante,
-      id_curso: curso.id_curso,
+      id_curso: idCursoDestino,
       estado: "aprobado",
     },
     update: {
@@ -704,12 +842,91 @@ export async function desmarcarCurso(
     );
   }
 
-  await prisma.historial_curso.delete({
+  // deleteMany, no delete: entre el findUnique de arriba y este punto,
+  // un segundo click/request concurrente pudo haber borrado ya la misma
+  // fila (P2025 "No record was found for a delete"). deleteMany no
+  // lanza si el where no matchea nada -- mantiene la operación
+  // idempotente de verdad, no solo en el caso donde nunca hubo fila.
+  await prisma.historial_curso.deleteMany({
     where: {
-      id_estudiante_id_curso: {
-        id_estudiante: estudiante.id_estudiante,
-        id_curso: curso.id_curso,
-      },
+      id_estudiante: estudiante.id_estudiante,
+      id_curso: curso.id_curso,
     },
   });
+}
+
+// -----------------------------------------------------------------------
+// Tipos de salida del endpoint GET /api/estudiantes/:carnet/secciones-cursando
+// -----------------------------------------------------------------------
+
+/**
+ * Mismo shape que el tipo `Seccion` del frontend (ver
+ * frontend/src/types/seccion.ts) -- a propósito, para que Mi Horario
+ * pueda reusar el componente de calendario ya existente en Mis Cursos
+ * sin necesitar un tipo ni un mapeo aparte.
+ */
+export interface SeccionCursando {
+  nrc: string;
+  codigoCurso: string;
+  titulo: string;
+  seccion: string;
+  creditos: number;
+  capacidad: number;
+  inscritos: number;
+  disponibles: number;
+  profesor: string;
+  horarios: HorarioBloqueInfo[];
+}
+
+/**
+ * Secciones confirmadas ("cursando") de un estudiante, para la pantalla
+ * Mi Horario -- independiente de Mis Cursos/oferta: lee directo de
+ * historial_curso, no de la oferta del período activo, así que no
+ * depende de que Banner siga publicando esas secciones para seguir
+ * mostrándolas (un curso ya matriculado no debería desaparecer del
+ * horario si Banner deja de listarlo).
+ *
+ * Un solo query con include (curso + seccion + profesor + horario_bloque)
+ * -- sin N+1, a diferencia del patrón actual de Mis Cursos que resuelve
+ * cada NRC con una llamada aparte a GET /horarios/nrc/:nrc.
+ */
+export async function getSeccionesCursando(carnet: string): Promise<SeccionCursando[]> {
+  const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
+  if (!estudiante) {
+    throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
+  }
+
+  const historial = await prisma.historial_curso.findMany({
+    where: { id_estudiante: estudiante.id_estudiante, estado: "cursando" },
+    include: {
+      curso: true,
+      seccion: { include: { profesor: true, horario_bloque: true } },
+    },
+  });
+
+  // En la práctica toda fila "cursando" tiene sección (confirmarMatricula
+  // siempre la setea) -- se filtra igual por si acaso, en vez de asumirlo
+  // y reventar con un curso sin horario que mostrar.
+  return historial
+    .filter((h) => h.seccion !== null)
+    .map((h) => {
+      const seccion = h.seccion!;
+      return {
+        nrc: seccion.nrc,
+        codigoCurso: h.curso.codigo,
+        titulo: h.curso.nombre,
+        seccion: seccion.numero_seccion,
+        creditos: Number(h.curso.creditos),
+        capacidad: seccion.capacidad,
+        inscritos: seccion.inscritos,
+        disponibles: seccion.disponibles,
+        profesor: seccion.profesor?.nombre ?? "",
+        horarios: seccion.horario_bloque.map((bloque) => ({
+          dia: bloque.dia,
+          horaInicio: formatHora(bloque.hora_inicio),
+          horaFin: formatHora(bloque.hora_fin),
+          aula: bloque.aula,
+        })),
+      };
+    });
 }

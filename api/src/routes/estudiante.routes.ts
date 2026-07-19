@@ -5,6 +5,7 @@ import {
   confirmarMatricula,
   marcarCursoAprobado,
   desmarcarCurso,
+  getSeccionesCursando,
   EstudianteNoEncontradoError,
   PeriodoActivoInvalidoError,
   CursoNoEncontradoError,
@@ -83,6 +84,34 @@ estudianteRouter.get(
         return res.status(500).json({ error: err.message });
       }
       console.error("Error en GET /estudiantes/:carnet/oferta", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
+ * GET /api/estudiantes/:carnet/secciones-cursando
+ *
+ * Secciones confirmadas ("cursando") del estudiante, para la pantalla Mi
+ * Horario -- lee directo de historial_curso, independiente de la oferta
+ * del período activo (a diferencia de /oferta). Ver getSeccionesCursando
+ * en estudiante.service.ts.
+ */
+estudianteRouter.get(
+  "/estudiantes/:carnet/secciones-cursando",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+
+    try {
+      const secciones = await getSeccionesCursando(carnet);
+      return res.json(secciones);
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      console.error("Error en GET /estudiantes/:carnet/secciones-cursando", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }
   }

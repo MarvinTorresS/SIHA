@@ -5,6 +5,7 @@
     "module": "commonjs",
     "target": "esnext",
     "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
     "types": ["node"],
     "sourceMap": true,
     "declaration": true,

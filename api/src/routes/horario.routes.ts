@@ -56,6 +56,7 @@ router.get("/secciones/:codigo", async (req: Request, res: Response) => {
       capacidad: s.capacidad,
       inscritos: s.inscritos,
       disponibles: s.disponibles,
+      estadoOferta: s.estado_oferta,
       profesor: s.profesor?.nombre ?? null,
       horarios: s.horario_bloque.map((h) => ({
         dia: h.dia,
@@ -107,6 +108,7 @@ router.get("/nrc/:nrc", async (req: Request, res: Response) => {
       capacidad: seccion.capacidad,
       inscritos: seccion.inscritos,
       disponibles: seccion.disponibles,
+      estadoOferta: seccion.estado_oferta,
       profesor: seccion.profesor?.nombre ?? null,
       horarios: seccion.horario_bloque.map((h) => ({
         dia: h.dia,

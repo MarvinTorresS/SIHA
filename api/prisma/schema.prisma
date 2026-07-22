@@ -116,6 +116,7 @@ model seccion {
   capacidad           Int               @default(0) @db.SmallInt
   inscritos           Int               @default(0) @db.SmallInt
   disponibles         Int               @default(0) @db.SmallInt
+  estado_oferta       String            @default("activa") @db.VarChar(10)
   es_general          Boolean           @default(false)
   fecha_inicio        DateTime?         @db.Date
   fecha_fin           DateTime?         @db.Date

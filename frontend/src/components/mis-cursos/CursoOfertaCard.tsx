@@ -27,6 +27,7 @@ function toSeccion(curso: CursoOferta, s: SeccionOferta): Seccion {
     capacidad: s.capacidad,
     inscritos: s.inscritos,
     disponibles: s.disponibles,
+    estadoOferta: s.estadoOferta,
     profesor: s.profesor ?? "Profesor por asignar",
     horarios: s.horarios,
   }
@@ -51,10 +52,12 @@ function DetalleSeccion({
   profesor,
   horarios,
   cupos,
+  estadoOferta,
 }: {
   profesor: string | null
   horarios: SeccionOferta["horarios"]
   cupos?: { disponibles: number; capacidad: number }
+  estadoOferta?: string
 }) {
   return (
     <>
@@ -70,6 +73,12 @@ function DetalleSeccion({
         <p className="flex items-center gap-1.5 text-muted-foreground">
           <Users className="size-3 shrink-0" />
           {cupos.disponibles}/{cupos.capacidad} cupos
+        </p>
+      )}
+      {estadoOferta === "agotada" && (
+        <p className="flex items-center gap-1.5 text-muted-foreground italic">
+          <Users className="size-3 shrink-0" />
+          Sin cupo — no vista en la última actualización
         </p>
       )}
     </>
@@ -234,6 +243,7 @@ export function CursoOfertaCard({
                     profesor={s.profesor}
                     horarios={s.horarios}
                     cupos={{ disponibles: s.disponibles, capacidad: s.capacidad }}
+                    estadoOferta={s.estadoOferta}
                   />
                 </button>
               ))}

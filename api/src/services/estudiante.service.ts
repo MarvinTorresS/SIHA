@@ -374,6 +374,7 @@ export interface SeccionOfertaInfo {
   capacidad: number;
   inscritos: number;
   disponibles: number;
+  estadoOferta: string;
   horarios: HorarioBloqueInfo[];
 }
 
@@ -504,6 +505,7 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
     capacidad: s.capacidad,
     inscritos: s.inscritos,
     disponibles: s.disponibles,
+    estadoOferta: s.estado_oferta,
     horarios: s.horario_bloque.map((b) => ({
       dia: b.dia,
       horaInicio: formatHora(b.hora_inicio),
@@ -874,6 +876,7 @@ export interface SeccionCursando {
   capacidad: number;
   inscritos: number;
   disponibles: number;
+  estadoOferta: string;
   profesor: string;
   horarios: HorarioBloqueInfo[];
 }
@@ -920,6 +923,7 @@ export async function getSeccionesCursando(carnet: string): Promise<SeccionCursa
         capacidad: seccion.capacidad,
         inscritos: seccion.inscritos,
         disponibles: seccion.disponibles,
+        estadoOferta: seccion.estado_oferta,
         profesor: seccion.profesor?.nombre ?? "",
         horarios: seccion.horario_bloque.map((bloque) => ({
           dia: bloque.dia,

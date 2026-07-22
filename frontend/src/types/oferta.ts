@@ -9,6 +9,9 @@ export interface SeccionOferta {
   capacidad: number
   inscritos: number
   disponibles: number
+  /** "activa" | "agotada" -- si Banner dejó de listar este NRC en la
+   * última corrida del ETL, queda en "agotada" pero no se borra. */
+  estadoOferta: string
   horarios: BloqueHorario[]
 }
 

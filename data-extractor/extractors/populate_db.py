@@ -463,14 +463,15 @@ def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int
                 INSERT INTO seccion (nrc, codigo_curso_banner, id_periodo, id_profesor,
                                      numero_seccion, titulo, tipo, campus,
                                      creditos,
-                                     capacidad, inscritos, disponibles,
+                                     capacidad, inscritos, disponibles, estado_oferta,
                                      es_general, fecha_inicio, fecha_fin, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'activa', %s, %s, %s, %s)
                 ON CONFLICT (nrc, id_periodo) DO UPDATE SET
                     id_profesor = EXCLUDED.id_profesor,
                     capacidad = EXCLUDED.capacidad,
                     inscritos = EXCLUDED.inscritos,
                     disponibles = EXCLUDED.disponibles,
+                    estado_oferta = 'activa',
                     metadata = EXCLUDED.metadata,
                     actualizado_en = now()
                 RETURNING id_seccion
@@ -514,36 +515,33 @@ def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int
                             (section_id, day, start_time, end_time, classroom),
                         )
 
-    # Limpieza de secciones huérfanas: banner_*_202620.json es la fuente
-    # completa y autoritativa de lo que Banner ofrece HOY para este
-    # período -- si un NRC dejó de aparecer (cambió, se canceló, Banner
-    # renumeró la sección), la fila vieja en `seccion` queda huérfana
-    # para siempre porque este loader solo hace INSERT/UPDATE, nunca
-    # DELETE. Confirmado en producción: 17 secciones fantasma acumuladas
-    # (isi/itecad/topo, incluyendo generales), todas con banner_program
-    # real pero un NRC que ya no existe en ningún archivo actual -- un
-    # estudiante las veía en su oferta como si Banner las siguiera
-    # publicando. Se borran las que NO aparecen en `all_sections` de esta
-    # corrida, con scope estricto a `id_periodo` para no tocar períodos
-    # históricos que no se están recargando. Seguro para historial_curso
-    # (ON DELETE SET NULL en fk_historial_seccion): un curso ya
-    # matriculado no pierde su registro, solo la referencia a la sección
-    # específica si esta desaparece de Banner.
+    # Secciones que dejan de aparecer en Banner: NUNCA se borran (ver
+    # incidente documentado en V2__agregar_estado_oferta_seccion.sql --
+    # antes esto era un DELETE y llegó a acumular 17 secciones fantasma
+    # borradas de un tirón). En vez de eso, todo NRC que existía en la
+    # BD para este período pero no vino en el JSON de esta corrida se
+    # marca estado_oferta='agotada', sin tocar capacidad/inscritos/
+    # disponibles -- quedan en el último valor real conocido. Si el NRC
+    # vuelve a aparecer en una corrida futura, el upsert de arriba ya lo
+    # regresa a 'activa' con cupos frescos.
     nrcs_vigentes = {sec["crn"] for sec in all_sections}
     with conn.cursor() as cur:
         cur.execute(
             "SELECT nrc FROM seccion WHERE id_periodo = %s AND nrc <> ALL(%s)",
             (period_id, list(nrcs_vigentes)),
         )
-        nrcs_huerfanos = [row[0] for row in cur.fetchall()]
-        if nrcs_huerfanos:
+        nrcs_agotados = [row[0] for row in cur.fetchall()]
+        if nrcs_agotados:
             cur.execute(
-                "DELETE FROM seccion WHERE id_periodo = %s AND nrc = ANY(%s)",
-                (period_id, nrcs_huerfanos),
+                """
+                UPDATE seccion SET estado_oferta = 'agotada', actualizado_en = now()
+                WHERE id_periodo = %s AND nrc = ANY(%s)
+                """,
+                (period_id, nrcs_agotados),
             )
             log.info(
-                f"  ✓ {len(nrcs_huerfanos)} secciones huérfanas eliminadas "
-                f"(ya no están en ningún banner_*.json): {', '.join(nrcs_huerfanos)}"
+                f"  ✓ {len(nrcs_agotados)} secciones marcadas estado_oferta='agotada' "
+                f"(ya no están en ningún banner_*.json): {', '.join(nrcs_agotados)}"
             )
 
     return dict(sections_by_code)

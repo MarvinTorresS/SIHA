@@ -11,9 +11,13 @@ import { authRouter } from "./routes/auth.routes";
 export function createApp() {
   const app = express();
 
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:5173")
+    .split(",")
+    .map((origin) => origin.trim());
+
   app.use(
     cors({
-      origin: "http://localhost:5173", // frontend en desarrollo (Vite)
+      origin: allowedOrigins,
     })
   );
   app.use(express.json());

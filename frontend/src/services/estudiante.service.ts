@@ -1,6 +1,7 @@
 import { api } from "./api"
 import type { MallaProgresoResponse } from "@/types/estudiante"
 import type { CursoOferta } from "@/types/oferta"
+import type { OpcionesSlotResponse, SeleccionCursoReal } from "@/types/mallaSlot"
 
 export const estudianteService = {
   /** GET /api/estudiantes/{carnet}/malla-progreso */
@@ -41,5 +42,29 @@ export const estudianteService = {
    */
   quitarDelHistorial(carnet: string, codigoCurso: string) {
     return api.delete<void>(`/estudiantes/${carnet}/historial/${codigoCurso}`)
+  },
+  /**
+   * GET /api/estudiantes/{carnet}/malla-slots/{slotCodigo}/opciones --
+   * opciones de catálogo (Generales u Optativas) disponibles para llenar
+   * ese slot, o el estado "tope_alcanzado".
+   */
+  obtenerOpcionesSlot(carnet: string, slotCodigo: string) {
+    return api.get<OpcionesSlotResponse>(
+      `/estudiantes/${carnet}/malla-slots/${slotCodigo}/opciones`
+    )
+  },
+  /**
+   * POST /api/estudiantes/{carnet}/malla-slots/{slotCodigo} -- asigna un
+   * curso real (del catálogo o "Otro") a ese slot.
+   */
+  asignarCursoRealASlot(carnet: string, slotCodigo: string, seleccion: SeleccionCursoReal) {
+    return api.post<void>(`/estudiantes/${carnet}/malla-slots/${slotCodigo}`, seleccion)
+  },
+  /**
+   * DELETE /api/estudiantes/{carnet}/malla-slots/{slotCodigo} -- desasigna
+   * el curso real de ese slot.
+   */
+  desasignarSlotMalla(carnet: string, slotCodigo: string) {
+    return api.delete<void>(`/estudiantes/${carnet}/malla-slots/${slotCodigo}`)
   },
 }

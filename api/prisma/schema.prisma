@@ -27,16 +27,18 @@ model curso {
   nombre             String              @db.VarChar(200)
   creditos           Decimal             @default(0) @db.Decimal(3, 1)
   id_carrera         Int?
+  ciclo_id           String              @default("") @db.VarChar(10)
+  ciclo_nombre       String              @default("") @db.VarChar(50)
+  es_optativo        Boolean             @default(false)
   es_general         Boolean             @default(false)
   creditos_fuente    String              @default("malla") @db.VarChar(20)
   creado_en          DateTime            @default(now()) @db.Timestamptz(6)
   actualizado_en     DateTime            @default(now()) @db.Timestamptz(6)
-  ciclo_id           String              @default("") @db.VarChar(10)
-  ciclo_nombre       String              @default("") @db.VarChar(50)
-  es_optativo        Boolean             @default(false)
+  verificado         Boolean             @default(true)
   carrera            carrera?            @relation(fields: [id_carrera], references: [id_carrera], onDelete: Restrict, onUpdate: NoAction)
   curso_carrera      curso_carrera[]
-  historial_curso    historial_curso[]
+  historial_curso    historial_curso[]   @relation("historial_curso_real")
+  historial_slot     historial_curso[]   @relation("historial_curso_slot")
   prerequisito_ciclo prerequisito_ciclo?
   requisitosDe       prerrequisito[]     @relation("prerrequisito_id_cursoTocurso")
   esRequisitoDe      prerrequisito[]     @relation("prerrequisito_id_curso_requeridoTocurso")
@@ -116,13 +118,13 @@ model seccion {
   capacidad           Int               @default(0) @db.SmallInt
   inscritos           Int               @default(0) @db.SmallInt
   disponibles         Int               @default(0) @db.SmallInt
-  estado_oferta       String            @default("activa") @db.VarChar(10)
   es_general          Boolean           @default(false)
   fecha_inicio        DateTime?         @db.Date
   fecha_fin           DateTime?         @db.Date
+  metadata            Json              @default("{}")
   creado_en           DateTime          @default(now()) @db.Timestamptz(6)
   actualizado_en      DateTime          @default(now()) @db.Timestamptz(6)
-  metadata            Json              @default("{}")
+  estado_oferta       String            @default("activa") @db.VarChar(10)
   historial_curso     historial_curso[]
   horario_bloque      horario_bloque[]
   curso               curso?            @relation(fields: [id_curso], references: [id_curso], onUpdate: NoAction)
@@ -143,8 +145,8 @@ model estudiante {
   correo          String            @unique(map: "uq_estudiante_correo") @db.VarChar(150)
   id_carrera      Int
   ciclo_actual_id String            @default("") @db.VarChar(10)
-  creado_en       DateTime          @default(now()) @db.Timestamptz(6)
   password_hash   String            @db.VarChar(100)
+  creado_en       DateTime          @default(now()) @db.Timestamptz(6)
   carrera         carrera           @relation(fields: [id_carrera], references: [id_carrera], onUpdate: NoAction, map: "fk_estudiante_carrera")
   historial       historial_curso[]
 
@@ -162,27 +164,18 @@ model historial_curso {
   id_periodo     Int?
   creado_en      DateTime   @default(now()) @db.Timestamptz(6)
   actualizado_en DateTime   @default(now()) @db.Timestamptz(6)
-  curso          curso      @relation(fields: [id_curso], references: [id_curso], onUpdate: NoAction, map: "fk_historial_curso")
+  id_slot_malla  Int?
+  curso          curso      @relation("historial_curso_real", fields: [id_curso], references: [id_curso], onUpdate: NoAction, map: "fk_historial_curso")
   estudiante     estudiante @relation(fields: [id_estudiante], references: [id_estudiante], onDelete: Cascade, onUpdate: NoAction, map: "fk_historial_estudiante")
   periodo        periodo?   @relation(fields: [id_periodo], references: [id_periodo], onUpdate: NoAction, map: "fk_historial_periodo")
   seccion        seccion?   @relation(fields: [id_seccion], references: [id_seccion], onUpdate: NoAction, map: "fk_historial_seccion")
+  slot_malla     curso?     @relation("historial_curso_slot", fields: [id_slot_malla], references: [id_curso], onDelete: NoAction, onUpdate: NoAction, map: "fk_historial_slot_malla")
 
   @@unique([id_estudiante, id_curso], map: "uq_historial_estudiante_curso")
   @@index([id_estudiante], map: "ix_historial_estudiante")
   @@index([id_curso], map: "ix_historial_curso")
+  @@index([id_slot_malla], map: "ix_historial_slot_malla")
   @@index([estado], map: "ix_historial_estado")
-}
-
-/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
-model horario_bloque_backup_pre_dedup {
-  id_horario_bloque Int?
-  id_seccion        Int?
-  dia               String?   @db.VarChar(15)
-  hora_inicio       DateTime? @db.Time(6)
-  hora_fin          DateTime? @db.Time(6)
-  aula              String?   @db.VarChar(50)
-
-  @@ignore
 }
 
 model prerequisito_ciclo {

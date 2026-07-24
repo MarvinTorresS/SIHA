@@ -6,8 +6,9 @@ import { CARRERAS } from "@/types/academico"
 import type { CarreraSigla } from "@/types/academico"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   Select,
@@ -60,14 +61,8 @@ export function RegistroPage() {
     <main className="flex min-h-svh items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="flex size-9 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs">
-              UNA
-            </div>
-            <p className="text-sm font-semibold">SIHA</p>
-          </div>
+          <p className="text-sm font-semibold mb-2">Sistema de Itinerarios y Horarios Académicos</p>
           <CardTitle>Crear cuenta</CardTitle>
-          <CardDescription>Campus Coto · Sistema de Horarios y Avance</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
@@ -86,6 +81,10 @@ export function RegistroPage() {
                 autoComplete="username"
                 required
               />
+              <p className="text-xs text-muted-foreground">
+                Tu identificación y contraseña de SIHA son independientes de tus
+                credenciales de Banner.
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -132,9 +131,8 @@ export function RegistroPage() {
 
             <div className="space-y-1.5">
               <Label htmlFor="password">Contraseña</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="new-password"

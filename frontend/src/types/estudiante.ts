@@ -37,6 +37,9 @@ export interface CursoConProgreso {
   esOptativo: boolean
   estado: EstadoCursoProgreso
   nota: string | null
+  /** Solo presente en slots GEN{n}/OPT{n} con asignación explícita (ver Sheet "marcar aprobado con selector"). */
+  cursoRealCodigo: string | null
+  cursoRealNombre: string | null
   /** Solo presente si historial_curso.id_seccion no es null (típico en "cursando") */
   seccion: SeccionInfo | null
 }

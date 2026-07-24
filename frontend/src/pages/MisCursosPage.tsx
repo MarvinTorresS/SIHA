@@ -119,6 +119,39 @@ export function MisCursosPage() {
   const [filtroEstado, setFiltroEstado] = useState<"todos" | EstadoOferta>("todos")
   const [filtroArea, setFiltroArea] = useState("todas")
 
+  // Tope de 4 Estudios Generales (aprobado/cursando en BD + los que el
+  // estudiante ya agregó al borrador local pero no ha confirmado
+  // todavía) -- deshabilita "Agregar sección" en la card de un general
+  // nuevo antes de que el estudiante intente matricularlo, en vez de
+  // dejar que el error llegue recién al confirmar (el backend igual lo
+  // vuelve a validar en confirmarMatricula, esto es solo UX).
+  const limiteGeneralesAlcanzado = useMemo(() => {
+    if (!data) return false
+    const generalesConfirmados = data.filter(
+      (c) => c.esGeneral && (c.estado === "aprobado" || c.estado === "cursando")
+    ).length
+    const codigosGenerales = new Set(data.filter((c) => c.esGeneral).map((c) => c.codigo))
+    const generalesEnBorrador = seccionesManuales.filter((s) =>
+      codigosGenerales.has(s.codigoCurso)
+    ).length
+    return generalesConfirmados + generalesEnBorrador >= 4
+  }, [data, seccionesManuales])
+
+  // Mismo criterio que limiteGeneralesAlcanzado, pero contra el tope de
+  // optativas de la carrera del estudiante (dinámico, no siempre 4).
+  const limiteOptativasAlcanzado = useMemo(() => {
+    if (!data) return false
+    const optativasConfirmadas = data.filter(
+      (c) => c.esOptativa && (c.estado === "aprobado" || c.estado === "cursando")
+    ).length
+    const codigosOptativas = new Set(data.filter((c) => c.esOptativa).map((c) => c.codigo))
+    const optativasEnBorrador = seccionesManuales.filter((s) =>
+      codigosOptativas.has(s.codigoCurso)
+    ).length
+    const maximoOptativas = data.find((c) => c.esOptativa)?.maximoOptativas ?? Infinity
+    return optativasConfirmadas + optativasEnBorrador >= maximoOptativas
+  }, [data, seccionesManuales])
+
   const areasDisponibles = useMemo(() => {
     if (!data) return []
     const areas = new Set(data.map((c) => resolverArea(c.codigo).label))
@@ -302,6 +335,8 @@ export function MisCursosPage() {
                       quitarConfirmadoMutation.isPending &&
                       quitarConfirmadoMutation.variables === curso.codigo
                     }
+                    limiteGeneralesAlcanzado={limiteGeneralesAlcanzado}
+                    limiteOptativasAlcanzado={limiteOptativasAlcanzado}
                   />
                 ))}
               </div>

@@ -6,12 +6,20 @@ import {
   marcarCursoAprobado,
   desmarcarCurso,
   getSeccionesCursando,
+  obtenerOpcionesParaSlot,
+  asignarCursoRealASlot,
+  desasignarSlotMalla,
   EstudianteNoEncontradoError,
   PeriodoActivoInvalidoError,
   CursoNoEncontradoError,
   CursoFueraDeCarreraError,
   CursoNoMarcableError,
   SeccionNoEncontradaError,
+  SlotInvalidoError,
+  TopeSlotsAlcanzadoError,
+  CursoYaAsignadoAOtroSlotError,
+  TopeGeneralesMatriculaError,
+  TopeOptativasMatriculaError,
 } from "../services/estudiante.service";
 import { requireAuth, requireOwnCarnet } from "../middleware/requireAuth";
 
@@ -155,6 +163,12 @@ estudianteRouter.post(
       if (err instanceof CursoFueraDeCarreraError) {
         return res.status(403).json({ error: err.message });
       }
+      if (err instanceof TopeGeneralesMatriculaError) {
+        return res.status(409).json({ error: err.message });
+      }
+      if (err instanceof TopeOptativasMatriculaError) {
+        return res.status(409).json({ error: err.message });
+      }
       if (err instanceof PeriodoActivoInvalidoError) {
         return res.status(500).json({ error: err.message });
       }
@@ -225,6 +239,110 @@ estudianteRouter.delete(
         return res.status(409).json({ error: err.message });
       }
       console.error("Error en DELETE /estudiantes/:carnet/historial/:codigoCurso", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
+ * GET /api/estudiantes/:carnet/malla-slots/:slotCodigo/opciones
+ *
+ * Opciones disponibles para llenar un slot GEN{n}/OPT{n} de la malla del
+ * propio estudiante (catálogo real de Generales/Optativas, menos lo que
+ * ya está usado en otro slot), o el estado "tope_alcanzado" si ya no
+ * quedan cupos -- ver obtenerOpcionesParaSlot en estudiante.service.ts.
+ */
+estudianteRouter.get(
+  "/estudiantes/:carnet/malla-slots/:slotCodigo/opciones",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+    const slotCodigo = req.params.slotCodigo as string;
+
+    try {
+      const opciones = await obtenerOpcionesParaSlot(carnet, slotCodigo);
+      return res.json(opciones);
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      if (err instanceof SlotInvalidoError) {
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("Error en GET /estudiantes/:carnet/malla-slots/:slotCodigo/opciones", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
+ * POST /api/estudiantes/:carnet/malla-slots/:slotCodigo
+ * Body: { cursoRealCodigo } | { cursoRealNombre }
+ *
+ * Asigna explícitamente un curso real (del catálogo o creado a mano vía
+ * "Otro") al slot GEN{n}/OPT{n} -- ver asignarCursoRealASlot.
+ */
+estudianteRouter.post(
+  "/estudiantes/:carnet/malla-slots/:slotCodigo",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+    const slotCodigo = req.params.slotCodigo as string;
+    const { cursoRealCodigo, cursoRealNombre } = req.body ?? {};
+
+    if (typeof cursoRealCodigo !== "string" && typeof cursoRealNombre !== "string") {
+      return res.status(400).json({
+        error: "Se requiere cursoRealCodigo o cursoRealNombre",
+      });
+    }
+
+    try {
+      const seleccion =
+        typeof cursoRealCodigo === "string" ? { cursoRealCodigo } : { cursoRealNombre };
+      await asignarCursoRealASlot(carnet, slotCodigo, seleccion);
+      return res.status(204).send();
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError || err instanceof CursoNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      if (err instanceof SlotInvalidoError) {
+        return res.status(400).json({ error: err.message });
+      }
+      if (err instanceof TopeSlotsAlcanzadoError || err instanceof CursoYaAsignadoAOtroSlotError) {
+        return res.status(409).json({ error: err.message });
+      }
+      console.error("Error en POST /estudiantes/:carnet/malla-slots/:slotCodigo", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
+ * DELETE /api/estudiantes/:carnet/malla-slots/:slotCodigo
+ *
+ * Desasigna el curso real de un slot GEN{n}/OPT{n} -- ver desasignarSlotMalla.
+ */
+estudianteRouter.delete(
+  "/estudiantes/:carnet/malla-slots/:slotCodigo",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+    const slotCodigo = req.params.slotCodigo as string;
+
+    try {
+      await desasignarSlotMalla(carnet, slotCodigo);
+      return res.status(204).send();
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      if (err instanceof SlotInvalidoError) {
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("Error en DELETE /estudiantes/:carnet/malla-slots/:slotCodigo", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }
   }

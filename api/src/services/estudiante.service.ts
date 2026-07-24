@@ -37,6 +37,13 @@ export interface CursoConProgreso {
   esOptativo: boolean;
   estado: EstadoCursoProgreso;
   nota: string | null;
+  // Solo presente en slots GEN{n}/OPT{n} con una asignación explícita
+  // (historial_curso.id_slot_malla, ver V9) -- el código/nombre del curso
+  // real que el estudiante eligió para llenar este slot vía el Sheet de
+  // "marcar aprobado con selector". null en cualquier otro caso, incluido
+  // un slot GEN{n} legacy sin backfillear (ver diagnostico_backfill).
+  cursoRealCodigo: string | null;
+  cursoRealNombre: string | null;
   // Solo presente cuando historial_curso.id_seccion no es null (típicamente
   // en estado "cursando"). null en cualquier otro caso -- no se inventa
   // una sección para cursos aprobados históricos sin ese dato, ni para
@@ -77,6 +84,33 @@ export class PeriodoActivoInvalidoError extends Error {}
 export class CursoNoEncontradoError extends Error {}
 export class CursoFueraDeCarreraError extends Error {}
 export class CursoNoMarcableError extends Error {}
+export class SlotInvalidoError extends Error {}
+export class TopeSlotsAlcanzadoError extends Error {}
+export class CursoYaAsignadoAOtroSlotError extends Error {}
+export class TopeGeneralesMatriculaError extends Error {}
+export class TopeOptativasMatriculaError extends Error {}
+
+// Mismo tope que contarSlotsUsados (GEN siempre 4, confirmado en las 5
+// carreras vía PLANES_DE_ESTUDIO.xlsx) -- se usa tanto en getOfertaCiclo
+// (para marcar "bloqueado" un general nuevo cuando ya se llegó al tope)
+// como en confirmarMatricula (para rechazar la matrícula si se intenta
+// igual, ej. request directo sin pasar por la UI).
+const MAXIMO_GENERALES_MATRICULA = 4;
+
+/**
+ * Identifica una electiva REAL del catálogo "Optativos" (ciclo_id="Opt",
+ * es_optativo=false, es_general=false, ver excel_loader.py) -- distinta
+ * del slot genérico OPT{n}_{sigla} de la malla (es_optativo=true, fuera
+ * del ciclo "Opt", ver contarSlotsUsados). Solo las electivas reales
+ * cuentan contra el tope de optativas de Mis Cursos/confirmarMatricula.
+ */
+function esOptativaCatalogo(curso: {
+  ciclo_id: string;
+  es_optativo: boolean;
+  es_general: boolean;
+}): boolean {
+  return curso.ciclo_id === "Opt" && !curso.es_optativo && !curso.es_general;
+}
 
 /**
  * Formatea un valor Time de Prisma (llega como Date con fecha epoch
@@ -176,6 +210,7 @@ export async function getMallaProgreso(
   const historial = await prisma.historial_curso.findMany({
     where: { id_estudiante: estudiante.id_estudiante },
     include: {
+      curso: true,
       seccion: {
         include: {
           profesor: true,
@@ -185,6 +220,12 @@ export async function getMallaProgreso(
     },
   });
   const historialPorCurso = new Map(historial.map((h) => [h.id_curso, h]));
+  // Asignación explícita slot -> curso real (ver V9). Reemplaza el
+  // emparejamiento heurístico por orden para cualquier fila ya migrada
+  // por el backfill o creada por el nuevo flujo de asignarCursoRealASlot.
+  const historialPorSlot = new Map(
+    historial.filter((h) => h.id_slot_malla !== null).map((h) => [h.id_slot_malla as number, h])
+  );
 
   // Cursos del ciclo actual que sí tienen alguna sección ofertada en el
   // periodo activo -- se resuelve en una sola consulta para no hacer N+1.
@@ -248,49 +289,79 @@ export async function getMallaProgreso(
       esOptativo: curso.es_optativo,
       estado,
       nota: filaHistorial?.nota?.toString() ?? null,
+      cursoRealCodigo: null,
+      cursoRealNombre: null,
       seccion: seccionInfo,
     };
   });
 
-  // Auto-completar los slots genéricos GEN{n}_{sigla} (creados por
-  // excel_loader.py, regla 4: "Estudios Generales I/II/III/IV" sin
-  // código Banner propio, namespaced por carrera porque curso.codigo es
-  // UNIQUE) con el estado real de los cursos de generales (es_general=
-  // true) que el estudiante haya matriculado/aprobado -- a diferencia de
-  // un slot OPT{n} (donde cualquiera de ~13 electivas con prerrequisitos
-  // distintos podría llenarlo, así que no se resuelve solo), un curso de
-  // generales SIEMPRE cubre cualquier slot GEN{n} de la carrera, así que
-  // sí hay una relación 1:1 segura que resolver automáticamente: primer
-  // slot libre <- primer curso de generales cursado, en orden estable.
-  // Sin esto, un estudiante que matricula EGA121 desde Mis Cursos ve esa
-  // tarjeta real como "Cursando" en la sección aparte, pero el slot
-  // GEN3_ISI de su malla (que es el que realmente cuenta el crédito de
-  // la carrera) se queda en "Pendiente" para siempre.
-  // Solo se autocompletan los slots SIN historial propio -- si el
-  // estudiante ya marcó GEN1_ISI/GEN2_ISI como aprobado a mano (fila
-  // real en historial_curso para ese id_curso puntual), esa decisión
-  // manual no se pisa; el autocompletado solo llena los que quedan
-  // "libres" (pendiente/sin_seccion), que es lo que realmente estaba
-  // roto: GEN3_ISI/GEN4_ISI atascados en pendiente pese a la matrícula
-  // real.
-  const slotsGenerales = cursosConProgreso
-    .filter((c) => /^GEN\d+_/.test(c.codigo) && !historialPorCurso.has(c.idCurso))
+  // Completar los slots genéricos GEN{n}_{sigla}/OPT{n}_{sigla} (creados
+  // por excel_loader.py) con el curso real que el estudiante asignó vía
+  // el Sheet de "marcar aprobado con selector" (ver asignarCursoRealASlot,
+  // V9) -- historial_curso.id_slot_malla es ahora la fuente de verdad,
+  // explícita y persistida, de qué curso real llena cada slot. Solo se
+  // completan los slots SIN historial propio -- si el estudiante ya marcó
+  // el slot mismo como aprobado a mano (fila real para ese id_curso
+  // puntual, caso legacy), esa decisión no se pisa.
+  const slotsGenerales = cursosConProgreso.filter(
+    (c) => /^GEN\d+_/.test(c.codigo) && !historialPorCurso.has(c.idCurso)
+  );
+  const slotsOptativas = cursosConProgreso.filter(
+    (c) => /^OPT\d+_/.test(c.codigo) && !historialPorCurso.has(c.idCurso)
+  );
+
+  for (const slot of [...slotsGenerales, ...slotsOptativas]) {
+    const asignacion = historialPorSlot.get(slot.idCurso);
+    if (!asignacion) continue;
+    slot.estado = asignacion.estado as EstadoCursoProgreso;
+    slot.nota = asignacion.nota?.toString() ?? null;
+    slot.cursoRealCodigo = asignacion.curso.codigo;
+    slot.cursoRealNombre = asignacion.curso.nombre;
+    slot.seccion = asignacion.seccion
+      ? {
+          nrc: asignacion.seccion.nrc,
+          numeroSeccion: asignacion.seccion.numero_seccion,
+          profesor: asignacion.seccion.profesor?.nombre ?? null,
+          horarios: asignacion.seccion.horario_bloque.map((bloque) => ({
+            dia: bloque.dia,
+            horaInicio: formatHora(bloque.hora_inicio),
+            horaFin: formatHora(bloque.hora_fin),
+            aula: bloque.aula,
+          })),
+        }
+      : null;
+  }
+
+  // Red de seguridad: slots GEN de datos aún no backfillados (ver V9,
+  // script backfill-slot-malla.ts) -- se resuelven con la misma
+  // heurística por orden que existía antes de id_slot_malla, para no
+  // regresar a "Pendiente" mientras el backfill de ese entorno no haya
+  // corrido todavía (ej. producción, antes de aplicar este cambio ahí).
+  const slotsGeneralesSinAsignar = slotsGenerales
+    .filter((s) => !historialPorSlot.has(s.idCurso))
     .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
 
   const codigosGeneralesReales = new Set(cursosGenerales.map((g) => g.codigo));
-  const generalesCursados = cursosConProgreso
+  const generalesCursadosSinSlot = cursosConProgreso
     .filter((c) => codigosGeneralesReales.has(c.codigo))
     .filter((c) => c.estado === "aprobado" || c.estado === "cursando")
+    .filter((c) => !Array.from(historialPorSlot.values()).some((h) => h.id_curso === c.idCurso))
     .sort((a, b) => {
       if (a.estado !== b.estado) return a.estado === "aprobado" ? -1 : 1;
       return a.codigo.localeCompare(b.codigo);
     });
 
-  for (let i = 0; i < Math.min(slotsGenerales.length, generalesCursados.length); i++) {
-    const slot = slotsGenerales[i];
-    const fuente = generalesCursados[i];
+  for (
+    let i = 0;
+    i < Math.min(slotsGeneralesSinAsignar.length, generalesCursadosSinSlot.length);
+    i++
+  ) {
+    const slot = slotsGeneralesSinAsignar[i];
+    const fuente = generalesCursadosSinSlot[i];
     slot.estado = fuente.estado;
     slot.nota = fuente.nota;
+    slot.cursoRealCodigo = fuente.codigo;
+    slot.cursoRealNombre = fuente.nombre;
     slot.seccion = fuente.seccion;
   }
 
@@ -385,10 +456,27 @@ export interface CursoOferta {
   cicloId: string;
   cicloNombre: string;
   estado: EstadoOferta;
+  // Curso de Estudios Generales (EGF/EGC/EGS/EGA, es_general=true en el
+  // modelo) -- el frontend lo usa para bloquear la matrícula de un 5to
+  // general una vez el estudiante ya tiene 4 aprobados/cursando (ver
+  // MAXIMO_GENERALES_MATRICULA en confirmarMatricula).
+  esGeneral: boolean;
+  // Electiva real del catálogo "Optativos" (esOptativaCatalogo) -- el
+  // frontend lo usa igual que esGeneral, contra maximoOptativas (tope
+  // dinámico por carrera, no un número fijo).
+  esOptativa: boolean;
+  // Tope de optativas de la carrera del estudiante (dinámico, ver
+  // contarSlotsUsados) -- mismo valor en todas las filas, se repite por
+  // fila para que el frontend no necesite un segundo endpoint.
+  maximoOptativas: number;
   // Solo no-vacío cuando estado === "bloqueado" -- los prerrequisitos
   // directos (tipo='prerequisito') que el estudiante todavía no tiene
   // en estado "aprobado" en su historial.
   prerrequisitosFaltantes: { code: string; name: string }[];
+  // Razón textual de bloqueo cuando NO es por prerrequisitos (ej. tope de
+  // 4 Estudios Generales ya alcanzado) -- prerrequisitosFaltantes queda
+  // vacío en ese caso porque no es ese tipo de bloqueo.
+  motivoBloqueo: string | null;
   // Informativo siempre que existan, sin importar el estado -- no
   // bloquea la elegibilidad (decisión: validar "ambos en el horario"
   // queda para Mi Horario, no para esta pantalla).
@@ -529,6 +617,27 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
     historial.filter((h) => h.estado === "aprobado").map((h) => h.curso.codigo)
   );
 
+  // Generales que ya cuentan contra el tope de 4 (aprobado/cursando) --
+  // un general SIN fila de historial se marca "bloqueado" en vez de
+  // "elegible" si ya se llegó al tope, para que el estudiante no lo vea
+  // como una opción real en Mis Cursos (confirmarMatricula igual lo
+  // rechaza si se intenta de todos modos, ver TopeGeneralesMatriculaError).
+  const generalesActuales = historial.filter(
+    (h) => h.curso.es_general && (h.estado === "aprobado" || h.estado === "cursando")
+  ).length;
+  const topeGeneralesAlcanzado = generalesActuales >= MAXIMO_GENERALES_MATRICULA;
+
+  // Mismo criterio que generales, pero para optativas reales del
+  // catálogo (esOptativaCatalogo) -- tope dinámico por carrera, igual
+  // que contarSlotsUsados (ISI: 4, Ciencia de Datos: 3, etc.).
+  const optativasActuales = historial.filter(
+    (h) => esOptativaCatalogo(h.curso) && (h.estado === "aprobado" || h.estado === "cursando")
+  ).length;
+  const maximoOptativas = await prisma.curso_carrera.count({
+    where: { id_carrera: estudiante.id_carrera, curso: { es_optativo: true } },
+  });
+  const topeOptativasAlcanzado = optativasActuales >= maximoOptativas;
+
   const cursosConOferta = cursosCandidatos.filter((c) =>
     seccionesPorCurso.has(c.curso.codigo)
   );
@@ -542,6 +651,7 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
 
     let estado: EstadoOferta;
     let prerrequisitosFaltantes: { code: string; name: string }[] = [];
+    let motivoBloqueo: string | null = null;
     let seccionActual: SeccionOfertaInfo | null = null;
 
     if (filaHistorial?.estado === "aprobado") {
@@ -554,7 +664,17 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
       prerrequisitosFaltantes = prerequisitosDirectos.filter(
         (p) => !codigosAprobados.has(p.code)
       );
-      estado = prerrequisitosFaltantes.length > 0 ? "bloqueado" : "elegible";
+      if (prerrequisitosFaltantes.length > 0) {
+        estado = "bloqueado";
+      } else if (curso.es_general && topeGeneralesAlcanzado) {
+        estado = "bloqueado";
+        motivoBloqueo = `Ya completaste tus ${MAXIMO_GENERALES_MATRICULA} Estudios Generales`;
+      } else if (esOptativaCatalogo(curso) && topeOptativasAlcanzado) {
+        estado = "bloqueado";
+        motivoBloqueo = `Ya completaste tus ${maximoOptativas} optativas`;
+      } else {
+        estado = "elegible";
+      }
     }
 
     resultado.push({
@@ -564,7 +684,11 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
       cicloId: candidato.cicloId,
       cicloNombre: candidato.cicloNombre,
       estado,
+      esGeneral: curso.es_general,
+      esOptativa: esOptativaCatalogo(curso),
+      maximoOptativas,
       prerrequisitosFaltantes,
+      motivoBloqueo,
       corequisitos,
       seccionActual,
       secciones: seccionesOfertadas.map(mapSeccion),
@@ -586,9 +710,18 @@ export class SeccionNoEncontradaError extends Error {}
  * "elegibles" (sin fila de historial todavía), así que ese NRC nunca
  * debería llegar acá para un curso ya aprobado.
  *
+ * Además bloquea un NUEVO curso general (es_general=true, sin fila de
+ * historial todavía) si el estudiante ya tiene MAXIMO_GENERALES_MATRICULA
+ * generales en aprobado/cursando, y lo mismo para una NUEVA optativa real
+ * (esOptativaCatalogo) contra el tope de optativas de su carrera (dinámico,
+ * ver contarSlotsUsados) -- ambos conteos se llevan dentro del loop (no
+ * solo antes) para que matricular 2+ nuevas del mismo tipo en el mismo
+ * lote tampoco se salte el tope.
+ *
  * Corre en una transacción: si un NRC falla (no existe en el periodo
- * activo, o el curso no pertenece a la carrera), NINGÚN curso del lote
- * se confirma -- evita una matrícula parcial silenciosa.
+ * activo, el curso no pertenece a la carrera, o se alcanza el tope de
+ * generales/optativas), NINGÚN curso del lote se confirma -- evita una
+ * matrícula parcial silenciosa.
  */
 export async function confirmarMatricula(carnet: string, nrcs: string[]): Promise<void> {
   const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
@@ -605,6 +738,25 @@ export async function confirmarMatricula(carnet: string, nrcs: string[]): Promis
   const periodoActivo = periodosActivos[0];
 
   await prisma.$transaction(async (tx) => {
+    let generalesActuales = await tx.historial_curso.count({
+      where: {
+        id_estudiante: estudiante.id_estudiante,
+        estado: { in: ["aprobado", "cursando"] },
+        curso: { es_general: true },
+      },
+    });
+
+    let optativasActuales = await tx.historial_curso.count({
+      where: {
+        id_estudiante: estudiante.id_estudiante,
+        estado: { in: ["aprobado", "cursando"] },
+        curso: { ciclo_id: "Opt", es_optativo: false, es_general: false },
+      },
+    });
+    const maximoOptativas = await tx.curso_carrera.count({
+      where: { id_carrera: estudiante.id_carrera, curso: { es_optativo: true } },
+    });
+
     for (const nrc of nrcs) {
       // findFirst, no findUnique: la constraint real es (nrc, id_periodo),
       // no nrc solo (ver horario.routes.ts).
@@ -632,6 +784,49 @@ export async function confirmarMatricula(carnet: string, nrcs: string[]): Promis
           throw new CursoFueraDeCarreraError(
             `El curso ${curso.codigo} no pertenece a la carrera del estudiante`
           );
+        }
+      }
+
+      if (curso.es_general) {
+        const yaEnHistorial = await tx.historial_curso.findUnique({
+          where: {
+            id_estudiante_id_curso: {
+              id_estudiante: estudiante.id_estudiante,
+              id_curso: curso.id_curso,
+            },
+          },
+        });
+        // Solo cuenta contra el tope si es un general NUEVO -- re-elegir
+        // otra sección de un general que ya está "cursando" no debe
+        // bloquearse por el tope que él mismo ya ocupa.
+        if (!yaEnHistorial) {
+          if (generalesActuales >= MAXIMO_GENERALES_MATRICULA) {
+            throw new TopeGeneralesMatriculaError(
+              `Ya tienes ${MAXIMO_GENERALES_MATRICULA} Estudios Generales aprobados o cursando -- no puedes matricular otro`
+            );
+          }
+          generalesActuales++;
+        }
+      }
+
+      if (esOptativaCatalogo(curso)) {
+        const yaEnHistorial = await tx.historial_curso.findUnique({
+          where: {
+            id_estudiante_id_curso: {
+              id_estudiante: estudiante.id_estudiante,
+              id_curso: curso.id_curso,
+            },
+          },
+        });
+        // Mismo criterio que generales: solo cuenta contra el tope si es
+        // una optativa NUEVA, no un cambio de sección de una ya cursando.
+        if (!yaEnHistorial) {
+          if (optativasActuales >= maximoOptativas) {
+            throw new TopeOptativasMatriculaError(
+              `Ya tienes ${maximoOptativas} optativas aprobadas o cursando -- no puedes matricular otra`
+            );
+          }
+          optativasActuales++;
         }
       }
 
@@ -708,6 +903,336 @@ async function resolverCursoGeneralParaSlot(
   const idx = slotsLibres.findIndex((s) => s.codigo === codigoSlot);
   if (idx === -1 || idx >= generalesCursados.length) return null;
   return generalesCursados[idx];
+}
+
+// -----------------------------------------------------------------------
+// Asignación explícita de curso real a un slot de malla (GEN{n}/OPT{n})
+// -----------------------------------------------------------------------
+
+export interface OpcionCatalogo {
+  codigo: string;
+  nombre: string;
+  creditos: string;
+}
+
+export type OpcionesSlotResponse =
+  | {
+      estado: "disponible";
+      tipo: "GEN" | "OPT";
+      actuales: number;
+      maximo: number;
+      seleccionActual: string | null;
+      opciones: OpcionCatalogo[];
+    }
+  | {
+      estado: "tope_alcanzado";
+      tipo: "GEN" | "OPT";
+      maximo: number;
+      mensaje: string;
+    };
+
+function tipoDeSlot(codigoSlot: string): "GEN" | "OPT" | null {
+  if (/^GEN\d+_/.test(codigoSlot)) return "GEN";
+  if (/^OPT\d+_/.test(codigoSlot)) return "OPT";
+  return null;
+}
+
+/**
+ * Cuenta cuántos slots GEN/OPT tiene hoy el estudiante con un curso real
+ * asignado (id_slot_malla no nulo, estado aprobado/cursando) y el tope
+ * correspondiente. GEN siempre son 4 (confirmado en las 5 carreras vía
+ * PLANES_DE_ESTUDIO.xlsx); OPT se cuenta dinámicamente sobre curso_carrera
+ * de la carrera del estudiante -- nunca hardcodeado, varía por carrera
+ * (ISI: 4, Enseñanza del Inglés: 3, Topografía y Catastro: 4, Ciencia de
+ * Datos: 3, Administración: 4).
+ */
+async function contarSlotsUsados(
+  idEstudiante: number,
+  idCarrera: number,
+  tipo: "GEN" | "OPT"
+): Promise<{ actuales: number; maximo: number }> {
+  const actuales = await prisma.historial_curso.count({
+    where: {
+      id_estudiante: idEstudiante,
+      estado: { in: ["aprobado", "cursando"] },
+      slot_malla: { codigo: { startsWith: tipo } },
+    },
+  });
+
+  if (tipo === "GEN") return { actuales, maximo: 4 };
+
+  const maximo = await prisma.curso_carrera.count({
+    where: { id_carrera: idCarrera, curso: { es_optativo: true } },
+  });
+  return { actuales, maximo };
+}
+
+/**
+ * Opciones disponibles para llenar un slot GEN{n}/OPT{n}: el catálogo de
+ * cursos reales del tipo correspondiente (es_general=true para GEN;
+ * ciclo_id='Opt' AND es_optativo=false para OPT -- ver excel_loader.py),
+ * excluyendo los que el estudiante ya tiene en su historial (no se puede
+ * reusar el mismo curso real en dos slots). Si el slot ya tiene una
+ * asignación propia, se informa en seleccionActual para que el Sheet
+ * pueda preseleccionarla al reabrir en modo "editar".
+ */
+export async function obtenerOpcionesParaSlot(
+  carnet: string,
+  slotCodigo: string
+): Promise<OpcionesSlotResponse> {
+  const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
+  if (!estudiante) {
+    throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
+  }
+
+  const slot = await prisma.curso.findUnique({ where: { codigo: slotCodigo } });
+  const tipo = tipoDeSlot(slotCodigo);
+  if (!slot || !tipo) {
+    throw new SlotInvalidoError(`${slotCodigo} no es un slot de Generales/Optativas`);
+  }
+
+  const { actuales, maximo } = await contarSlotsUsados(
+    estudiante.id_estudiante,
+    estudiante.id_carrera,
+    tipo
+  );
+
+  const asignacionActual = await prisma.historial_curso.findFirst({
+    where: { id_estudiante: estudiante.id_estudiante, id_slot_malla: slot.id_curso },
+    include: { curso: true },
+  });
+
+  if (actuales >= maximo && !asignacionActual) {
+    return {
+      estado: "tope_alcanzado",
+      tipo,
+      maximo,
+      mensaje:
+        tipo === "GEN"
+          ? `Ya completaste tus ${maximo} Estudios Generales`
+          : `Ya completaste tus ${maximo} optativas`,
+    };
+  }
+
+  const historial = await prisma.historial_curso.findMany({
+    where: { id_estudiante: estudiante.id_estudiante },
+  });
+  const idsCursosUsados = new Set(historial.map((h) => h.id_curso));
+
+  const catalogo =
+    tipo === "GEN"
+      ? await prisma.curso.findMany({ where: { es_general: true }, orderBy: { codigo: "asc" } })
+      : await prisma.curso.findMany({
+          // id_carrera: las electivas concretas (ej. EIF420O de ISI,
+          // TDC102O de Ciencia de Datos) están acotadas a su carrera --
+          // sin este filtro, el catálogo mezclaba las de todas las
+          // carreras (confirmado contra la BD real, cada código *O trae
+          // su id_carrera propio desde el Excel de origen).
+          where: {
+            ciclo_id: "Opt",
+            es_optativo: false,
+            es_general: false,
+            id_carrera: estudiante.id_carrera,
+          },
+          orderBy: { nombre: "asc" },
+        });
+
+  const opciones = catalogo
+    .filter((c) => !idsCursosUsados.has(c.id_curso) || c.id_curso === asignacionActual?.id_curso)
+    .map((c) => ({ codigo: c.codigo, nombre: c.nombre, creditos: c.creditos.toString() }));
+
+  return {
+    estado: "disponible",
+    tipo,
+    actuales,
+    maximo,
+    seleccionActual: asignacionActual?.curso.codigo ?? null,
+    opciones,
+  };
+}
+
+/**
+ * Crea un curso "manual" para la opción "Otro" del Sheet: el estudiante
+ * solo ingresa el nombre (nunca va a recordar un código de Banner), así
+ * que se genera un código interno provisional único y se marca
+ * verificado=false para que quede distinguible en reportes de calidad
+ * de datos -- no es un dato verificado contra Banner/Excel como el resto
+ * del catálogo.
+ */
+async function crearCursoManual(
+  nombre: string,
+  tipo: "GEN" | "OPT",
+  idEstudiante: number
+): Promise<{ id_curso: number }> {
+  // curso.codigo es VARCHAR(20) -- formato fijo para no excederlo nunca:
+  // "GENM_" (5) + estudiante mod 1000 (3) + "_" (1) + epoch mod 1e10 (10)
+  // + 1 char al azar (desempate si dos creaciones caen en el mismo ms
+  // para el mismo estudiante mod 1000) = 20 exactos.
+  const sufijoEstudiante = String(idEstudiante % 1000).padStart(3, "0");
+  const sufijoTiempo = String(Date.now() % 10_000_000_000).padStart(10, "0");
+  const azar = Math.floor(Math.random() * 36).toString(36);
+  const codigo = `${tipo}M_${sufijoEstudiante}_${sufijoTiempo}${azar}`;
+  return prisma.curso.create({
+    data: {
+      codigo,
+      nombre: nombre.trim(),
+      creditos: 0,
+      id_carrera: null,
+      es_general: tipo === "GEN",
+      es_optativo: false,
+      verificado: false,
+      creditos_fuente: "manual",
+      ciclo_id: "Opt",
+      ciclo_nombre: "Optativos",
+    },
+    select: { id_curso: true },
+  });
+}
+
+/**
+ * Asigna explícitamente un curso real (del catálogo, o creado a mano vía
+ * "Otro") a un slot GEN{n}/OPT{n} del estudiante -- reemplaza el
+ * emparejamiento heurístico por orden con una asociación persistida en
+ * id_slot_malla. Backend es la fuente de verdad del tope: se revalida acá
+ * aunque el frontend ya haya filtrado, porque una carrera concurrente
+ * (dos tabs) o datos desincronizados no deben poder saltarse el máximo
+ * real de 4 generales / N optativas de la carrera.
+ */
+export async function asignarCursoRealASlot(
+  carnet: string,
+  slotCodigo: string,
+  seleccion: { cursoRealCodigo: string } | { cursoRealNombre: string }
+): Promise<void> {
+  const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
+  if (!estudiante) {
+    throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
+  }
+
+  const slot = await prisma.curso.findUnique({ where: { codigo: slotCodigo } });
+  const tipo = tipoDeSlot(slotCodigo);
+  if (!slot || !tipo) {
+    throw new SlotInvalidoError(`${slotCodigo} no es un slot de Generales/Optativas`);
+  }
+
+  const { actuales, maximo } = await contarSlotsUsados(
+    estudiante.id_estudiante,
+    estudiante.id_carrera,
+    tipo
+  );
+  const yaAsignadoAEsteSlot = await prisma.historial_curso.findFirst({
+    where: { id_estudiante: estudiante.id_estudiante, id_slot_malla: slot.id_curso },
+  });
+  if (actuales >= maximo && !yaAsignadoAEsteSlot) {
+    throw new TopeSlotsAlcanzadoError(
+      tipo === "GEN"
+        ? `Ya completaste tus ${maximo} Estudios Generales`
+        : `Ya completaste tus ${maximo} optativas`
+    );
+  }
+
+  let cursoReal: { id_curso: number };
+  if ("cursoRealCodigo" in seleccion) {
+    const encontrado = await prisma.curso.findUnique({
+      where: { codigo: seleccion.cursoRealCodigo },
+    });
+    const esDelCatalogoCorrecto =
+      tipo === "GEN"
+        ? encontrado?.es_general
+        : encontrado?.ciclo_id === "Opt" &&
+          !encontrado.es_optativo &&
+          !encontrado.es_general &&
+          encontrado.id_carrera === estudiante.id_carrera;
+    if (!encontrado || !esDelCatalogoCorrecto) {
+      throw new CursoNoEncontradoError(
+        `${seleccion.cursoRealCodigo} no es una opción válida para este slot`
+      );
+    }
+    cursoReal = encontrado;
+  } else {
+    cursoReal = await crearCursoManual(seleccion.cursoRealNombre, tipo, estudiante.id_estudiante);
+  }
+
+  const yaUsadoEnOtroSlot = await prisma.historial_curso.findUnique({
+    where: {
+      id_estudiante_id_curso: {
+        id_estudiante: estudiante.id_estudiante,
+        id_curso: cursoReal.id_curso,
+      },
+    },
+  });
+  if (yaUsadoEnOtroSlot && yaUsadoEnOtroSlot.id_slot_malla !== slot.id_curso) {
+    throw new CursoYaAsignadoAOtroSlotError(
+      `Ese curso ya está asignado a otro slot de tu malla`
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Reabrir el Sheet y elegir un curso real DISTINTO al que ya llenaba
+    // este slot: el único índice único parcial es (id_estudiante,
+    // id_slot_malla), así que hay que soltar esa marca de la fila vieja
+    // ANTES de escribirla en la nueva -- si no, el upsert de abajo choca
+    // contra su propio slot todavía ocupado (P2002). La fila vieja no se
+    // borra: el curso real que representa sigue "aprobado" en el
+    // historial, solo deja de estar atado a este slot puntual.
+    if (yaAsignadoAEsteSlot && yaAsignadoAEsteSlot.id_curso !== cursoReal.id_curso) {
+      await tx.historial_curso.update({
+        where: { id_historial: yaAsignadoAEsteSlot.id_historial },
+        data: { id_slot_malla: null },
+      });
+    }
+
+    await tx.historial_curso.upsert({
+      where: {
+        id_estudiante_id_curso: {
+          id_estudiante: estudiante.id_estudiante,
+          id_curso: cursoReal.id_curso,
+        },
+      },
+      create: {
+        id_estudiante: estudiante.id_estudiante,
+        id_curso: cursoReal.id_curso,
+        id_slot_malla: slot.id_curso,
+        estado: "aprobado",
+      },
+      update: {
+        estado: "aprobado",
+        id_slot_malla: slot.id_curso,
+        actualizado_en: new Date(),
+      },
+    });
+  });
+}
+
+/**
+ * Desasigna el curso real de un slot GEN{n}/OPT{n} -- reemplaza al
+ * DELETE /historial genérico para estos slots, que hoy no hace nada si el
+ * slot no tiene una fila de historial PROPIA (el bug que este trabajo
+ * corrige): busca primero por id_slot_malla (esquema nuevo) y si no
+ * encuentra nada, cae al patrón legacy (id_curso = el propio placeholder,
+ * filas de optativas nunca redirigidas antes de esta migración).
+ */
+export async function desasignarSlotMalla(carnet: string, slotCodigo: string): Promise<void> {
+  const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
+  if (!estudiante) {
+    throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
+  }
+
+  const slot = await prisma.curso.findUnique({ where: { codigo: slotCodigo } });
+  if (!slot || !tipoDeSlot(slotCodigo)) {
+    throw new SlotInvalidoError(`${slotCodigo} no es un slot de Generales/Optativas`);
+  }
+
+  const fila = await prisma.historial_curso.findFirst({
+    where: { id_estudiante: estudiante.id_estudiante, id_slot_malla: slot.id_curso },
+  });
+  if (fila) {
+    await prisma.historial_curso.deleteMany({ where: { id_historial: fila.id_historial } });
+    return;
+  }
+
+  await prisma.historial_curso.deleteMany({
+    where: { id_estudiante: estudiante.id_estudiante, id_curso: slot.id_curso },
+  });
 }
 
 /**

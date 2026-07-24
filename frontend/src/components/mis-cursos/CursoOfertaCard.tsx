@@ -92,12 +92,23 @@ interface CursoOfertaCardProps {
    * local (removerSeccionManual, sin llamada a la API). */
   onQuitarConfirmado: (codigo: string) => void
   quitandoConfirmado: boolean
+  /** true si el estudiante ya alcanzó sus 4 Estudios Generales
+   * (aprobados/cursando + borrador) -- deshabilita "Agregar sección"
+   * para un general que todavía no tiene ninguna elegida. No aplica a
+   * cursos que no son generales, ni a un general que el estudiante ya
+   * eligió (puede seguir cambiando de sección). */
+  limiteGeneralesAlcanzado: boolean
+  /** Mismo criterio que limiteGeneralesAlcanzado, para el tope de
+   * optativas de la carrera (dinámico, no siempre 4). */
+  limiteOptativasAlcanzado: boolean
 }
 
 export function CursoOfertaCard({
   curso,
   onQuitarConfirmado,
   quitandoConfirmado,
+  limiteGeneralesAlcanzado,
+  limiteOptativasAlcanzado,
 }: CursoOfertaCardProps) {
   const [abierto, setAbierto] = useState(false)
   const area = resolverArea(curso.codigo)
@@ -110,6 +121,11 @@ export function CursoOfertaCard({
   const removerSeccionManual = useHorarioStore((s) => s.removerSeccionManual)
 
   const haySoloUnaSeccion = curso.secciones.length <= 1
+  const generalBloqueadoPorTope =
+    curso.esGeneral && !seccionElegida && limiteGeneralesAlcanzado
+  const optativaBloqueadaPorTope =
+    curso.esOptativa && !seccionElegida && limiteOptativasAlcanzado
+  const bloqueadoPorTope = generalBloqueadoPorTope || optativaBloqueadaPorTope
 
   function elegirSeccion(s: SeccionOferta) {
     const nueva = toSeccion(curso, s)
@@ -153,6 +169,10 @@ export function CursoOfertaCard({
               {curso.prerrequisitosFaltantes.map((p) => codigoVisible(p.code)).join(", ")}
             </span>
           </p>
+        )}
+
+        {curso.estado === "bloqueado" && curso.motivoBloqueo && (
+          <p className="text-xs text-muted-foreground">{curso.motivoBloqueo}</p>
         )}
 
         {curso.corequisitos.length > 0 && (
@@ -218,6 +238,12 @@ export function CursoOfertaCard({
                   profesor={seccionElegida.profesor}
                   horarios={seccionElegida.horarios}
                 />
+              </div>
+            ) : bloqueadoPorTope ? (
+              <div className="rounded-md border border-dashed border-border px-2 py-1.5 text-xs text-muted-foreground text-center">
+                {generalBloqueadoPorTope
+                  ? "Ya completaste tus 4 Estudios Generales"
+                  : `Ya completaste tus ${curso.maximoOptativas} optativas`}
               </div>
             ) : (
               <CollapsibleTrigger asChild>

@@ -38,8 +38,21 @@ export interface CursoOferta {
   cicloId: string
   cicloNombre: string
   estado: EstadoOferta
-  /** Solo no-vacío cuando estado === "bloqueado". */
+  /** Curso de Estudios Generales (EGF/EGC/EGS/EGA) -- se usa para
+   * bloquear en la UI la matrícula de un 5to general una vez el
+   * estudiante ya tiene 4 aprobados/cursando. */
+  esGeneral: boolean
+  /** Electiva real del catálogo "Optativos" -- mismo uso que esGeneral,
+   * pero contra maximoOptativas (tope dinámico por carrera). */
+  esOptativa: boolean
+  /** Tope de optativas de la carrera del estudiante (mismo valor en
+   * todas las filas). */
+  maximoOptativas: number
+  /** Solo no-vacío cuando estado === "bloqueado" por prerrequisitos. */
   prerrequisitosFaltantes: PrerequisitoFaltante[]
+  /** Razón de bloqueo cuando NO es por prerrequisitos (ej. tope de 4
+   * Estudios Generales). null en cualquier otro caso. */
+  motivoBloqueo: string | null
   /** Informativo siempre que existan -- no bloquea la elegibilidad. */
   corequisitos: CorequisitoOferta[]
   /** Solo presente cuando estado === "cursando". */

@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PrerequisiteLinesOverlay } from "@/components/malla/PrerequisiteLinesOverlay"
+import { AsignarCursoRealSheet } from "@/components/malla/AsignarCursoRealSheet"
 import {
   Select,
   SelectContent,
@@ -66,6 +67,8 @@ import type { MallaCurso } from "@/types/malla"
 interface CursoCardProps {
   curso: CursoConProgreso
   onToggleAprobado: (codigo: string, actualmenteAprobado: boolean) => void
+  onOpenSlotSheet: (codigo: string) => void
+  onDesasignarSlot: (codigo: string) => void
   onToggleHighlight: (codigo: string) => void
   registerCardRef: (codigo: string, el: HTMLElement | null) => void
   isHighlighted: boolean
@@ -75,11 +78,14 @@ interface CursoCardProps {
   showMoreRequirementsIcon: boolean
   marcando: boolean
   desmarcando: boolean
+  desasignando: boolean
 }
 
 function CursoCard({
   curso,
   onToggleAprobado,
+  onOpenSlotSheet,
+  onDesasignarSlot,
   onToggleHighlight,
   registerCardRef,
   isHighlighted,
@@ -89,9 +95,10 @@ function CursoCard({
   showMoreRequirementsIcon,
   marcando,
   desmarcando,
+  desasignando,
 }: CursoCardProps) {
   const area = resolverArea(curso.codigo)
-  const cambioPendiente = marcando || desmarcando
+  const cambioPendiente = marcando || desmarcando || desasignando
   const aprobado = curso.estado === "aprobado"
   // Slot genérico OPT{n} dentro de su ciclo real (ej. "Cuarto Año - I
   // Ciclo"), distinto del catálogo "Optativos" (cicloId="Opt") que lista
@@ -112,12 +119,50 @@ function CursoCard({
   // cubre); acá va en el catálogo (no se sabe a cuál de los 4 slots
   // termina emparejado, ni si ya hay uno emparejado con otro curso).
   const esCursoGeneralEnCatalogo = curso.cicloId === "General"
+  // Slot de malla con selector de curso real (GEN{n}/OPT{n}): en vez de
+  // togglear directo, el check/card abre el Sheet de "¿cuál curso
+  // aprobaste?" -- ver AsignarCursoRealSheet. GEN se detecta por patrón
+  // de código (no tiene esOptativo=true); OPT ya tiene esSlotGenericoOptativo.
+  const esSlotConSelector = /^GEN\d+_/.test(curso.codigo) || esSlotGenericoOptativo
+  // Un slot con selector ya "resuelto" no debe reabrir el Sheet al hacer
+  // click -- cubre dos formas de estar resuelto: (a) curso real vinculado
+  // vía id_slot_malla (cursoRealCodigo no nulo, ver getMallaProgreso) o
+  // (b) caso legacy pre-Sheet, donde el propio placeholder GEN{n}/OPT{n}
+  // quedó marcado aprobado/cursando directo, sin curso real distinguido
+  // (cursoRealCodigo null pero estado ya resuelto). Sin esto, un slot ya
+  // aprobado por cualquiera de las dos vías reabre el selector en vez de
+  // comportarse como el checkbox normal de cualquier otra card -- el bug
+  // real reportado (no se podía desmarcar Generales ya aprobados).
+  const slotYaResuelto =
+    esSlotConSelector && (curso.cursoRealCodigo !== null || aprobado || curso.estado === "cursando")
   const tooltip = useLongPressTooltip(isHighlighted)
+
+  // Único punto de decisión entre abrir el Sheet, desasignar un slot con
+  // curso real vinculado, o togglear como cualquier card normal -- ver
+  // tabla de casos en slotYaResuelto/cursoRealCodigo arriba. Compartido
+  // por el check de la esquina y el click de card completa en modo edición
+  // para no duplicar la misma rama tres veces.
+  function handleToggleOApertura() {
+    if (esSlotConSelector && !slotYaResuelto) {
+      onOpenSlotSheet(curso.codigo)
+      return
+    }
+    if (esSlotConSelector && curso.cursoRealCodigo !== null) {
+      // desmarcarAprobado (DELETE /historial/:codigoCurso) busca la fila
+      // por id_curso = codigo enviado, que acá sería el placeholder -- la
+      // fila real vive con id_curso del curso real, vinculada por
+      // id_slot_malla, así que esa ruta no la encontraría (no-op
+      // silencioso). desasignarSlotMalla sí resuelve por id_slot_malla.
+      onDesasignarSlot(curso.codigo)
+      return
+    }
+    onToggleAprobado(curso.codigo, aprobado)
+  }
 
   function handleCheckClick(e: React.MouseEvent | React.KeyboardEvent) {
     e.stopPropagation()
     if (cambioPendiente || highlightModeActive) return
-    onToggleAprobado(curso.codigo, aprobado)
+    handleToggleOApertura()
   }
 
   // Fuera del modo edición, un click en la card resalta prerrequisitos
@@ -130,7 +175,7 @@ function CursoCard({
     if (tooltip.shouldSuppressClick()) return
     if (editModeActive) {
       if (cambioPendiente) return
-      onToggleAprobado(curso.codigo, aprobado)
+      handleToggleOApertura()
     } else {
       onToggleHighlight(curso.codigo)
     }
@@ -228,7 +273,7 @@ function CursoCard({
                   )}
                 </button>
                 <Badge variant="outline" className="text-xs font-mono">
-                  {codigoVisible(curso.codigo)}
+                  {curso.cursoRealCodigo ?? codigoVisible(curso.codigo)}
                 </Badge>
                 {/* Texto del badge de área oculto <sm (2 columnas, ~150px
                     por card -- no entra junto al nombre del curso sin
@@ -254,10 +299,15 @@ function CursoCard({
             </div>
 
             <p className="text-sm font-semibold leading-tight pl-1">{curso.nombre}</p>
+            {curso.cursoRealCodigo && (
+              <p className="text-xs text-muted-foreground leading-tight pl-1">
+                {curso.cursoRealNombre}
+              </p>
+            )}
 
             <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-border/60 pl-1">
-              {esSlotGenericoOptativo ? (
-                <span className="italic">Créditos según la electiva que curses</span>
+              {esSlotConSelector && !slotYaResuelto ? (
+                <span>Marcá el check para elegir cuál curso aprobaste</span>
               ) : esCursoGeneralEnCatalogo ? (
                 <span className="italic">
                   {curso.creditos} créditos -- se reflejan en el slot de Estudios
@@ -564,6 +614,22 @@ export function MallaPage() {
     onSuccess: invalidarProgreso,
   })
 
+  // Desmarcar un slot GEN{n}/OPT{n} que ya tiene un curso real vinculado vía
+  // id_slot_malla -- distinto de desmarcarAprobadoMutation porque esa pega
+  // en DELETE /historial/:codigoCurso, que busca la fila por id_curso =
+  // el placeholder mismo. En este caso la fila real vive con id_curso del
+  // curso real, no del placeholder -- esa búsqueda no encuentra nada y
+  // queda en no-op silencioso. desasignarSlotMalla sí resuelve por
+  // id_slot_malla (ver estudiante.service.ts backend).
+  const desasignarSlotMutation = useMutation({
+    mutationFn: (slotCodigo: string) =>
+      estudianteService.desasignarSlotMalla(estudiante!.carnet, slotCodigo),
+    onSuccess: invalidarProgreso,
+  })
+
+  // Sheet de "¿cuál curso aprobaste?" para slots GEN{n}/OPT{n} -- null = cerrado.
+  const [slotAbierto, setSlotAbierto] = useState<string | null>(null)
+
   // -----------------------------------------------------------------------
   // Modo edición por lotes: pensado para marcar varios cursos aprobados
   // seguidos (ej. al empezar semestre) sin que cada click en la card
@@ -636,25 +702,35 @@ export function MallaPage() {
     else marcarAprobadoMutation.mutate(codigo)
   }
 
-  // Esc para salir del modo -- se re-suscribe solo cuando editMode cambia,
-  // no en cada render (handleSalirModoEdicion lee el ref, no un closure
-  // capturado acá, así que sigue viendo el valor correcto igual).
+  // Esc para salir del modo -- se re-suscribe solo cuando editMode o
+  // slotAbierto cambian (handleSalirModoEdicion lee el ref, no un closure
+  // capturado acá, así que sigue viendo el valor correcto igual). Con el
+  // Sheet de "¿cuál curso aprobaste?" abierto, Esc solo debe cerrar el
+  // Sheet (lo maneja Radix) -- si además sale del modo edición, se pierde
+  // el contexto de qué se estaba marcando.
   useEffect(() => {
     if (!editMode) return
     function onKeyDown(e: KeyboardEvent) {
+      if (slotAbierto !== null) return
       if (e.key === "Escape") handleSalirModoEdicion()
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode])
+  }, [editMode, slotAbierto])
 
   // Click fuera de la grilla (en el chrome de la app: sidebar, header)
   // también sale del modo -- prereqHighlight.containerRef ya apunta al
-  // <main> que envuelve toda la malla.
+  // <main> que envuelve toda la malla. El Sheet de "¿cuál curso
+  // aprobaste?" (AsignarCursoRealSheet) se monta vía Radix Portal, FUERA
+  // de <main> -- sin el chequeo de slotAbierto, elegir una opción o tocar
+  // "Confirmar" ahí adentro se leía como "click afuera de la grilla" y
+  // cerraba el modo edición a mitad de la selección (el bug real
+  // reportado: al marcar una Estudios Generales, se salía del modo).
   useEffect(() => {
     if (!editMode) return
     function onMouseDown(e: MouseEvent) {
+      if (slotAbierto !== null) return
       const container = prereqHighlight.containerRef.current
       if (container && !container.contains(e.target as Node)) {
         handleSalirModoEdicion()
@@ -663,7 +739,7 @@ export function MallaPage() {
     document.addEventListener("mousedown", onMouseDown)
     return () => document.removeEventListener("mousedown", onMouseDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode])
+  }, [editMode, slotAbierto])
 
   const todosLosCursos = progreso?.semestres.flatMap((s) => s.cursos) ?? []
   const conteo = contarPorEstado(todosLosCursos)
@@ -785,6 +861,16 @@ export function MallaPage() {
               {desmarcarAprobadoMutation.error instanceof ApiError
                 ? desmarcarAprobadoMutation.error.message
                 : "No se pudo deshacer el curso aprobado. Intenta de nuevo."}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {esCarreraPropia && desasignarSlotMutation.isError && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {desasignarSlotMutation.error instanceof ApiError
+                ? desasignarSlotMutation.error.message
+                : "No se pudo desasignar el curso del slot. Intenta de nuevo."}
             </AlertDescription>
           </Alert>
         )}
@@ -1046,6 +1132,8 @@ export function MallaPage() {
                             key={curso.idCurso}
                             curso={curso}
                             onToggleAprobado={handleToggleAprobado}
+                            onOpenSlotSheet={setSlotAbierto}
+                            onDesasignarSlot={desasignarSlotMutation.mutate}
                             onToggleHighlight={prereqHighlight.toggleCourse}
                             registerCardRef={prereqHighlight.registerCardRef}
                             isHighlighted={prereqHighlight.isHighlighted(curso.codigo)}
@@ -1063,6 +1151,10 @@ export function MallaPage() {
                               desmarcarAprobadoMutation.isPending &&
                               desmarcarAprobadoMutation.variables === curso.codigo
                             }
+                            desasignando={
+                              desasignarSlotMutation.isPending &&
+                              desasignarSlotMutation.variables === curso.codigo
+                            }
                           />
                         ))}
                       </div>
@@ -1079,6 +1171,16 @@ export function MallaPage() {
           lines={prereqHighlight.lines}
         />
       </main>
+
+      {estudiante && (
+        <AsignarCursoRealSheet
+          carnet={estudiante.carnet}
+          slotCodigo={slotAbierto}
+          onOpenChange={(open) => {
+            if (!open) setSlotAbierto(null)
+          }}
+        />
+      )}
     </>
   )
 }

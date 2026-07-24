@@ -194,6 +194,67 @@ describe("POST /api/estudiantes/:carnet/matricula", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("responde 409 si el estudiante ya tiene 4 Estudios Generales y matricula un 5to", async () => {
+    const periodoActivo = await prisma.periodo.findFirstOrThrow({ where: { activo: true } });
+
+    // Un general (es_general=true) con sección ofertada este período --
+    // el 5to candidato que debe quedar bloqueado.
+    const generalConSeccion = await prisma.curso.findFirstOrThrow({
+      where: {
+        es_general: true,
+        id_curso: { not: idCurso },
+        seccion: { some: { id_periodo: periodoActivo.id_periodo } },
+      },
+      include: { seccion: { where: { id_periodo: periodoActivo.id_periodo } } },
+    });
+
+    // 4 generales distintos ya "aprobados" en el historial del estudiante
+    // de prueba -- no necesitan sección, historial_curso.create alcanza.
+    const cuatroGenerales = await prisma.curso.findMany({
+      where: { es_general: true, id_curso: { notIn: [idCurso, generalConSeccion.id_curso] } },
+      take: 4,
+    });
+    expect(cuatroGenerales.length).toBe(4); // fixture real: si cambia, este test debe fallar ruidoso
+
+    await prisma.historial_curso.createMany({
+      data: cuatroGenerales.map((c) => ({
+        id_estudiante: idEstudiante,
+        id_curso: c.id_curso,
+        estado: "aprobado",
+      })),
+    });
+
+    try {
+      const res = await request(app)
+        .post(`/api/estudiantes/${CARNET_TEST}-MAT/matricula`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ nrcs: [generalConSeccion.seccion[0].nrc] });
+
+      expect(res.status).toBe(409);
+
+      const fila = await prisma.historial_curso.findUnique({
+        where: {
+          id_estudiante_id_curso: { id_estudiante: idEstudiante, id_curso: generalConSeccion.id_curso },
+        },
+      });
+      expect(fila).toBeNull(); // el tope no debe dejar rastro de matrícula parcial
+    } finally {
+      await prisma.historial_curso.deleteMany({
+        where: { id_estudiante: idEstudiante, id_curso: { in: cuatroGenerales.map((c) => c.id_curso) } },
+      });
+    }
+  });
+
+  // NOTA: no hay test de integración equivalente para el tope de optativas
+  // (mismo mecanismo, ver esOptativaCatalogo/TopeOptativasMatriculaError en
+  // estudiante.service.ts) porque el fixture de datos real de este entorno
+  // no tiene NINGUNA electiva del catálogo "Optativos" con sección ofertada
+  // en el período activo (confirmado: 27 electivas en la BD, 0 con sección
+  // en ninguna carrera) -- sin un NRC real de una electiva no se puede
+  // ejercitar POST /matricula end-to-end. Si el fixture cambia y alguna
+  // electiva llega a tener sección, vale la pena espejar el test de
+  // generales de arriba.
 });
 
 describe("GET /api/estudiantes/:carnet/secciones-cursando", () => {

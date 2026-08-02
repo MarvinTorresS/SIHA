@@ -3,6 +3,7 @@
 # Importar desde cualquier extractor: from config import BANNER_BASE_URL, CICLO_ACTIVO
 
 import os
+from datetime import date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -95,3 +96,57 @@ DB_PORT = int(os.getenv("DATABASE_PORT", "5432"))
 DB_NAME = os.getenv("DATABASE_NAME", "sistema_horarios")
 DB_USER = os.getenv("DATABASE_USER", "horarios")
 DB_PASSWORD = os.getenv("DATABASE_PASSWORD", "horarios_dev")
+
+# ── Ventana de ejecución del ETL automatizado (Sprint 8, automatización) ─────
+# SIHA tiene 3 períodos de matrícula al año en Campus Coto: Enero, Julio y
+# Noviembre. Todavía no conocemos el día exacto en que el Registro abre cada
+# ciclo, así que el guard usa granularidad de MES, no de día -- más simple
+# y seguro que adivinar una fecha exacta (correr de más dentro del mes
+# correcto es inofensivo; lo que hay que evitar es correr fuera de esos
+# 3 meses, cuando no tiene sentido gastar corridas ni pegarle a Banner).
+#
+# Nota importante: el riesgo original que motivó "nunca correr después de
+# que abra matrícula" (Banner omite secciones llenas/cerradas de
+# searchResults una vez abierta, y el pipeline viejo las borraba sin
+# recuperación) ya está mitigado desde Sprint 8: populate_db.py marca esas
+# secciones como estado_oferta='agotada' en vez de borrarlas (ver
+# V2__agregar_estado_oferta_seccion.sql). Por eso alcanza con acotar por mes
+# completo en vez de necesitar el día exacto de corte.
+#
+# Cuando el Registro publique el calendario oficial de un ciclo, agregar acá
+# el día límite exacto en DIA_LIMITE_ETL_POR_MES si se quiere cortar el ETL
+# antes de fin de mes (opcional, no obligatorio).
+MESES_MATRICULA_ACTIVA: set[int] = {1, 7, 11}  # enero, julio, noviembre
+
+# Día límite (inclusive) dentro de un mes de matrícula activa, si se conoce.
+# Formato: {mes: dia_limite}. Vacío por defecto -- se llena ciclo a ciclo
+# cuando se conozca la fecha exacta de apertura, si se quiere ser más
+# estricto que "todo el mes".
+DIA_LIMITE_ETL_POR_MES: dict[int, int] = {}
+
+
+def debe_correr_etl(hoy: date | None = None) -> tuple[bool, str]:
+    """
+    Decide si el ETL automatizado (run_etl.py, disparado por cron) debe
+    ejecutarse hoy. Ver comentario de MESES_MATRICULA_ACTIVA arriba para el
+    razonamiento completo.
+
+    Retorna (debe_correr, razon) -- razon se loggea siempre, corra o no,
+    para dejar rastro de por qué una corrida se saltó o se ejecutó.
+    """
+    hoy = hoy or date.today()
+
+    if hoy.month not in MESES_MATRICULA_ACTIVA:
+        return False, (
+            f"mes {hoy.month} fuera de la ventana de matrícula "
+            f"{sorted(MESES_MATRICULA_ACTIVA)}"
+        )
+
+    limite = DIA_LIMITE_ETL_POR_MES.get(hoy.month)
+    if limite is not None and hoy.day > limite:
+        return False, (
+            f"día {hoy.day} excede el límite configurado ({limite}) "
+            f"para el mes {hoy.month}"
+        )
+
+    return True, "dentro de la ventana de matrícula activa"

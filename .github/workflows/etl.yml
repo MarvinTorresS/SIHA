@@ -1,0 +1,49 @@
+name: ETL Banner + Malla (automatizado)
+
+# Corre a diario, pero run_etl.py trae su propio guard (debe_correr_etl en
+# config.py): solo hace algo si estamos en Enero, Julio o Noviembre (meses
+# de matrícula en Campus Coto). Fuera de esos meses, el job termina en
+# segundos sin tocar la base de datos.
+#
+# workflow_dispatch permite dispararlo a mano desde la pestaña Actions de
+# GitHub, útil para probar el guard o forzar una corrida puntual.
+on:
+  schedule:
+    # 12:00 UTC = 06:00 hora Costa Rica (UTC-6)
+    - cron: "0 12 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: data-extractor
+    steps:
+      - name: Checkout del repo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar ETL (con guard de ventana de matrícula)
+        env:
+          DATABASE_HOST: ${{ secrets.DATABASE_HOST }}
+          DATABASE_PORT: ${{ secrets.DATABASE_PORT }}
+          DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
+          DATABASE_USER: ${{ secrets.DATABASE_USER }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+        run: python run_etl.py
+
+      - name: Subir logs (si falló)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: etl-logs
+          path: data-extractor/logs/
+          retention-days: 14

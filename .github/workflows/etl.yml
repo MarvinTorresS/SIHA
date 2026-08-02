@@ -11,7 +11,12 @@ on:
   schedule:
     # 12:00 UTC = 06:00 hora Costa Rica (UTC-6)
     - cron: "0 12 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      forzar_guard:
+        description: "Forzar la corrida ignorando el guard de mes (solo para pruebas puntuales -- corre contra la BD real)"
+        type: boolean
+        default: false
 
 jobs:
   etl:
@@ -38,6 +43,7 @@ jobs:
           DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
           DATABASE_USER: ${{ secrets.DATABASE_USER }}
           DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          FORZAR_ETL: ${{ github.event.inputs.forzar_guard }}
         run: python run_etl.py
 
       - name: Subir logs (si falló)

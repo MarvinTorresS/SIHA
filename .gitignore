@@ -69,3 +69,7 @@ api/malla_isi.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- Respaldos de base de datos (dumps de produccion, no versionar) ---
+*.dump
+siha_backup.dump

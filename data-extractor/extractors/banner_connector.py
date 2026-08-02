@@ -32,6 +32,7 @@ from config import (
     OUTPUT_RAW_DIR,
     LOGS_DIR,
     BANNER_PROGRAM_TO_CARRERA,
+    CICLO_ACTIVO,
 )
 
 logging.basicConfig(
@@ -45,7 +46,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 BANNER_BASE = "https://studentssb.una.ac.cr/StudentRegistrationSsb/ssb"
-TERM_CODE   = "202620"
+# Antes hardcodeado acá ("202620") -- ahora lee de config.CICLO_ACTIVO, la
+# única fuente de verdad del ciclo activo (ver también populate_db.py, que
+# usa el mismo valor para encontrar los banner_*.json de esta corrida).
+TERM_CODE   = CICLO_ACTIVO
 
 # Subjects por carrera
 # Los generales (EGF, EGC, EGS, EGA) se buscan con códigos fijos ya conocidos

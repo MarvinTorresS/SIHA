@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD,
     OUTPUT_NORMALIZED_DIR, OUTPUT_RAW_DIR, LOGS_DIR,
+    CICLO_ACTIVO,
 )
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -415,9 +416,16 @@ def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int
     Los archivos banner_*.json usan campos en inglés (crn, course, title, etc.)
     desde la actualización del banner_connector (jul/2026).
     """
-    files = list(OUTPUT_RAW_DIR.glob("banner_*_202620.json"))
+    # Antes hardcodeado a "banner_*_202620.json" -- ahora usa CICLO_ACTIVO de
+    # config.py. El bug real que esto evita: si CICLO_ACTIVO se actualiza para
+    # un ciclo nuevo pero este glob se queda con el valor viejo (o viceversa),
+    # esta función no encuentra ningún archivo, no inserta nada, y el ETL
+    # automatizado (cron diario) "corre" todos los días sin cargar ni un solo
+    # curso nuevo -- sin error visible, solo un warning en el log.
+    patron = f"banner_*_{CICLO_ACTIVO}.json"
+    files = list(OUTPUT_RAW_DIR.glob(patron))
     if not files:
-        log.warning("  ⚠ No se encontraron archivos banner_*_202620.json")
+        log.warning(f"  ⚠ No se encontraron archivos {patron}")
         return {}
 
     all_sections = []

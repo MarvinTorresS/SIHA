@@ -19,6 +19,9 @@ import {
   CursoYaAsignadoAOtroSlotError,
   TopeGeneralesMatriculaError,
   TopeOptativasMatriculaError,
+  CursoYaAprobadoError,
+  CursoCursandoEnOtroPeriodoError,
+  PrerrequisitosNoCumplidosError,
 } from "../services/estudiante.service";
 import { requireAuth, requireOwnCarnet } from "../middleware/requireAuth";
 import { respondPeriodError } from "../middleware/periodErrors";
@@ -166,6 +169,13 @@ estudianteRouter.post(
         return res.status(409).json({ error: err.message });
       }
       if (err instanceof TopeOptativasMatriculaError) {
+        return res.status(409).json({ error: err.message });
+      }
+      if (
+        err instanceof CursoYaAprobadoError ||
+        err instanceof CursoCursandoEnOtroPeriodoError ||
+        err instanceof PrerrequisitosNoCumplidosError
+      ) {
         return res.status(409).json({ error: err.message });
       }
       if (respondPeriodError(err, res)) return;

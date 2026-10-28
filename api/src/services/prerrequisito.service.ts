@@ -194,32 +194,35 @@ export interface PrerequisiteRef {
 }
 
 /**
- * Prerrequisitos DIRECTOS de un curso (tipo='prerequisito', un solo
- * nivel) -- reutilizado por estudiante.service.ts (GET /oferta) para
- * decidir "elegible" vs "bloqueado" sin construir el árbol recursivo
- * completo, que no hace falta para esa comprobación.
- *
- * @param careerId  ver buildPrerequisiteTree -- mismo scoping por carrera.
- *                  undefined = sin filtrar (unión de todas las carreras).
+ * Prerrequisitos DIRECTOS (tipo='prerequisito', un solo nivel) de varios
+ * cursos en una sola consulta -- la usa elegibilidad.service.ts para
+ * decidir "elegible" vs "bloqueado" sin construir el árbol recursivo ni
+ * consultar curso por curso. Devuelve un mapa
+ * id_curso -> prerrequisitos directos; un curso sin prerrequisitos no
+ * aparece en el mapa. Mismo scoping por carrera (id_carrera NULL o la
+ * indicada). Acepta un cliente de transacción para usarse dentro de una.
  */
-export async function getDirectPrerequisites(
-  courseId: number,
-  careerId?: number
-): Promise<PrerequisiteRef[]> {
-  const rows = await prisma.prerrequisito.findMany({
+export async function getDirectPrerequisitesForCourses(
+  courseIds: number[],
+  careerId: number,
+  client: Pick<typeof prisma, "prerrequisito"> = prisma
+): Promise<Map<number, PrerequisiteRef[]>> {
+  const rows = await client.prerrequisito.findMany({
     where: {
-      id_curso: courseId,
+      id_curso: { in: courseIds },
       tipo: "prerequisito",
-      ...(careerId !== undefined
-        ? { OR: [{ id_carrera: null }, { id_carrera: careerId }] }
-        : {}),
+      OR: [{ id_carrera: null }, { id_carrera: careerId }],
     },
     include: { cursoRequerido: true },
   });
-  return rows.map((row) => ({
-    code: row.cursoRequerido.codigo,
-    name: row.cursoRequerido.nombre,
-  }));
+
+  const porCurso = new Map<number, PrerequisiteRef[]>();
+  for (const row of rows) {
+    const lista = porCurso.get(row.id_curso) ?? [];
+    lista.push({ code: row.cursoRequerido.codigo, name: row.cursoRequerido.nombre });
+    porCurso.set(row.id_curso, lista);
+  }
+  return porCurso;
 }
 
 /**

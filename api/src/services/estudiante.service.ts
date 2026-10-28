@@ -1,5 +1,12 @@
 import { PrismaClient } from "@prisma/client";
-import { getDirectCorequisites, getDirectPrerequisites } from "./prerrequisito.service";
+import { getDirectCorequisites } from "./prerrequisito.service";
+import {
+  buildEligibilityContext,
+  evaluateCourse,
+  loadEligibilityContext,
+  type MissingPrerequisite,
+  type PeriodRef,
+} from "./elegibilidad.service";
 import { resolvePeriod } from "./periodo.service";
 
 const prisma = new PrismaClient();
@@ -461,8 +468,9 @@ export interface CursoOferta {
   maximoOptativas: number;
   // Solo no-vacío cuando estado === "bloqueado" -- los prerrequisitos
   // directos (tipo='prerequisito') que el estudiante todavía no tiene
-  // en estado "aprobado" en su historial.
-  prerrequisitosFaltantes: { code: string; name: string }[];
+  // en estado "aprobado" en su historial. enCurso=true si ese faltante
+  // está 'cursando' (no cuenta como cumplido, ver elegibilidad.service.ts).
+  prerrequisitosFaltantes: MissingPrerequisite[];
   // Razón textual de bloqueo cuando NO es por prerrequisitos (ej. tope de
   // 4 Estudios Generales ya alcanzado) -- prerrequisitosFaltantes queda
   // vacío en ese caso porque no es ese tipo de bloqueo.
@@ -476,6 +484,10 @@ export interface CursoOferta {
   // período (viene de historial_curso.id_seccion, no es una elección
   // del estudiante en esta pantalla).
   seccionActual: SeccionOfertaInfo | null;
+  // Solo presente cuando estado === "cursando": el período en que el
+  // estudiante está matriculado. Puede ser distinto del período pedido
+  // (un curso 'cursando' se ve como Cursando en todos los períodos).
+  periodoCursando: PeriodRef | null;
   // Secciones ofertadas por Banner este período para este curso --
   // vacío jamás en la respuesta final, porque un curso sin ninguna
   // sección ofertada no aparece en el arreglo (ver getOfertaCiclo).
@@ -496,12 +508,10 @@ export interface CursoOferta {
  * confirmada). Un curso sin ninguna sección ofertada no aparece en el
  * resultado: no hay nada que el estudiante pueda elegir para él.
  *
- * Estados:
- * - "aprobado"/"cursando": vienen directo de historial_curso.
- * - sin fila de historial: se corre el motor de prerrequisitos DIRECTOS
- *   (un solo nivel, no el árbol recursivo completo) contra el set de
- *   códigos que el estudiante tiene "aprobado" -- todos aprobados =
- *   "elegible", si falta alguno = "bloqueado" con el detalle de cuáles.
+ * Estados: ver evaluateCourse en elegibilidad.service.ts (única fuente de
+ * verdad, compartida con confirmarMatricula). Sobre "elegible" se aplican
+ * además los topes de Generales/Optativas, que son del plan y no se
+ * acotan por período.
  */
 export async function getOfertaCiclo(
   carnet: string,
@@ -597,13 +607,11 @@ export async function getOfertaCiclo(
     where: { id_estudiante: estudiante.id_estudiante },
     include: {
       curso: true,
+      periodo: true,
       seccion: { include: { profesor: true, horario_bloque: true } },
     },
   });
   const historialPorCurso = new Map(historial.map((h) => [h.id_curso, h]));
-  const codigosAprobados = new Set(
-    historial.filter((h) => h.estado === "aprobado").map((h) => h.curso.codigo)
-  );
 
   // Generales que ya cuentan contra el tope de 4 (aprobado/cursando) --
   // un general SIN fila de historial se marca "bloqueado" en vez de
@@ -630,6 +638,13 @@ export async function getOfertaCiclo(
     seccionesPorCurso.has(c.curso.codigo)
   );
 
+  const elegibilidad = await buildEligibilityContext(
+    prisma,
+    historial,
+    cursosConOferta.map((c) => c.curso.id_curso),
+    estudiante.id_carrera
+  );
+
   const resultado: CursoOferta[] = [];
   for (const candidato of cursosConOferta) {
     const curso = candidato.curso;
@@ -637,32 +652,18 @@ export async function getOfertaCiclo(
     const seccionesOfertadas = seccionesPorCurso.get(curso.codigo) ?? [];
     const corequisitos = await getDirectCorequisites(curso.id_curso, estudiante.id_carrera);
 
-    let estado: EstadoOferta;
-    let prerrequisitosFaltantes: { code: string; name: string }[] = [];
+    const evaluacion = evaluateCourse(elegibilidad, curso.id_curso);
+    let estado: EstadoOferta = evaluacion.estado;
     let motivoBloqueo: string | null = null;
-    let seccionActual: SeccionOfertaInfo | null = null;
+    const seccionActual: SeccionOfertaInfo | null =
+      estado === "cursando" && filaHistorial?.seccion ? mapSeccion(filaHistorial.seccion) : null;
 
-    if (filaHistorial?.estado === "aprobado") {
-      estado = "aprobado";
-    } else if (filaHistorial?.estado === "cursando") {
-      estado = "cursando";
-      seccionActual = filaHistorial.seccion ? mapSeccion(filaHistorial.seccion) : null;
-    } else {
-      const prerequisitosDirectos = await getDirectPrerequisites(curso.id_curso, estudiante.id_carrera);
-      prerrequisitosFaltantes = prerequisitosDirectos.filter(
-        (p) => !codigosAprobados.has(p.code)
-      );
-      if (prerrequisitosFaltantes.length > 0) {
-        estado = "bloqueado";
-      } else if (curso.es_general && topeGeneralesAlcanzado) {
-        estado = "bloqueado";
-        motivoBloqueo = `Ya completaste tus ${MAXIMO_GENERALES_MATRICULA} Estudios Generales`;
-      } else if (esOptativaCatalogo(curso) && topeOptativasAlcanzado) {
-        estado = "bloqueado";
-        motivoBloqueo = `Ya completaste tus ${maximoOptativas} optativas`;
-      } else {
-        estado = "elegible";
-      }
+    if (estado === "elegible" && curso.es_general && topeGeneralesAlcanzado) {
+      estado = "bloqueado";
+      motivoBloqueo = `Ya completaste tus ${MAXIMO_GENERALES_MATRICULA} Estudios Generales`;
+    } else if (estado === "elegible" && esOptativaCatalogo(curso) && topeOptativasAlcanzado) {
+      estado = "bloqueado";
+      motivoBloqueo = `Ya completaste tus ${maximoOptativas} optativas`;
     }
 
     resultado.push({
@@ -675,10 +676,11 @@ export async function getOfertaCiclo(
       esGeneral: curso.es_general,
       esOptativa: esOptativaCatalogo(curso),
       maximoOptativas,
-      prerrequisitosFaltantes,
+      prerrequisitosFaltantes: evaluacion.prerrequisitosFaltantes,
       motivoBloqueo,
       corequisitos,
       seccionActual,
+      periodoCursando: evaluacion.periodoCursando,
       secciones: seccionesOfertadas.map(mapSeccion),
     });
   }
@@ -688,15 +690,23 @@ export async function getOfertaCiclo(
 }
 
 export class SeccionNoEncontradaError extends Error {}
+export class CursoYaAprobadoError extends Error {}
+export class CursoCursandoEnOtroPeriodoError extends Error {}
+export class PrerrequisitosNoCumplidosError extends Error {}
 
 /**
  * Confirma la matrícula del borrador armado en Mis Cursos: por cada NRC,
  * sube historial_curso a estado='cursando' con la sección real elegida.
  * Mismo patrón de upsert y de validación de pertenencia a la carrera que
- * marcarCursoAprobado -- sin validación extra contra un 'aprobado'
- * existente, porque el frontend ya solo deja seleccionar cursos
- * "elegibles" (sin fila de historial todavía), así que ese NRC nunca
- * debería llegar acá para un curso ya aprobado.
+ * marcarCursoAprobado.
+ *
+ * Elegibilidad: se valida en backend con la MISMA función que usa la
+ * oferta (evaluateCourse), sin confiar en que el frontend solo deje
+ * elegir cursos "elegibles". Se rechaza:
+ * - un curso ya 'aprobado' (el upsert lo bajaría a 'cursando');
+ * - un curso 'cursando' en OTRO período (cursando en este mismo período
+ *   sí se permite: es un cambio de sección);
+ * - un curso con prerrequisitos faltantes ('cursando' no los cumple).
  *
  * Además bloquea un NUEVO curso general (es_general=true, sin fila de
  * historial todavía) si el estudiante ya tiene MAXIMO_GENERALES_MATRICULA
@@ -706,10 +716,10 @@ export class SeccionNoEncontradaError extends Error {}
  * solo antes) para que matricular 2+ nuevas del mismo tipo en el mismo
  * lote tampoco se salte el tope.
  *
- * Corre en una transacción: si un NRC falla (no existe en el periodo
- * activo, el curso no pertenece a la carrera, o se alcanza el tope de
- * generales/optativas), NINGÚN curso del lote se confirma -- evita una
- * matrícula parcial silenciosa.
+ * Corre en una transacción: si un NRC falla (no existe en el período,
+ * el curso no pertenece a la carrera, no es elegible, o se alcanza el
+ * tope de generales/optativas), NINGÚN curso del lote se confirma --
+ * evita una matrícula parcial silenciosa. Siempre guarda id_periodo.
  */
 export async function confirmarMatricula(
   carnet: string,
@@ -743,6 +753,17 @@ export async function confirmarMatricula(
       where: { id_carrera: estudiante.id_carrera, curso: { es_optativo: true } },
     });
 
+    const seccionesDelLote = await tx.seccion.findMany({
+      where: { nrc: { in: nrcs }, id_periodo: periodo.id_periodo },
+      select: { id_curso: true },
+    });
+    const elegibilidad = await loadEligibilityContext(
+      tx,
+      estudiante.id_estudiante,
+      estudiante.id_carrera,
+      seccionesDelLote.flatMap((s) => (s.id_curso === null ? [] : [s.id_curso]))
+    );
+
     for (const nrc of nrcs) {
       // findFirst, no findUnique: la constraint real es (nrc, id_periodo),
       // no nrc solo (ver horario.routes.ts).
@@ -771,6 +792,26 @@ export async function confirmarMatricula(
             `El curso ${curso.codigo} no pertenece a la carrera del estudiante`
           );
         }
+      }
+
+      const evaluacion = evaluateCourse(elegibilidad, curso.id_curso);
+      if (evaluacion.estado === "aprobado") {
+        throw new CursoYaAprobadoError(`El curso ${curso.codigo} ya está aprobado`);
+      }
+      if (
+        evaluacion.estado === "cursando" &&
+        evaluacion.periodoCursando?.codigo !== periodo.codigo
+      ) {
+        const enPeriodo = evaluacion.periodoCursando?.nombre ?? "otro período";
+        throw new CursoCursandoEnOtroPeriodoError(
+          `El curso ${curso.codigo} ya está matriculado en ${enPeriodo}`
+        );
+      }
+      if (evaluacion.estado === "bloqueado") {
+        const faltantes = evaluacion.prerrequisitosFaltantes.map((p) => p.code).join(", ");
+        throw new PrerrequisitosNoCumplidosError(
+          `El curso ${curso.codigo} requiere aprobar: ${faltantes}`
+        );
       }
 
       if (curso.es_general) {

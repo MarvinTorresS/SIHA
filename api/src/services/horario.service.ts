@@ -39,19 +39,19 @@ function timeToHourString(value: Date): string {
  * Busca las secciones correspondientes a una lista de NRCs y arma la
  * estructura de bloques horarios que espera el ConflictDetector.
  *
- * Lanza NrcNotFoundError si algún NRC de la lista no existe en la BD
+ * Lanza NrcNotFoundError si algún NRC de la lista no existe en el período
  * (se rechaza la validación completa en vez de validar parcialmente).
  *
- * Nota: nrc no es único por sí solo en el esquema (uq_seccion_nrc_periodo
- * es la combinación nrc + id_periodo), así que si en el futuro se
- * necesita filtrar por período específico, agregar ese filtro aquí.
- * Por ahora se asume un solo período activo relevante para la validación.
+ * Se filtra por período porque el NRC no es único por sí solo
+ * (uq_seccion_nrc_periodo es nrc + id_periodo): el mismo NRC puede ser
+ * secciones distintas en dos ciclos.
  */
 export async function getSectionSchedulesByNrc(
-  nrcs: string[]
+  nrcs: string[],
+  idPeriodo: number
 ): Promise<SectionSchedule[]> {
   const sections = await prisma.seccion.findMany({
-    where: { nrc: { in: nrcs } },
+    where: { nrc: { in: nrcs }, id_periodo: idPeriodo },
     include: { horario_bloque: true },
   });
 
@@ -81,8 +81,9 @@ export async function getSectionSchedulesByNrc(
  * conflictos usando el ConflictDetector puro.
  */
 export async function validateScheduleByNrc(
-  nrcs: string[]
+  nrcs: string[],
+  idPeriodo: number
 ): Promise<ValidationResult> {
-  const sections = await getSectionSchedulesByNrc(nrcs);
+  const sections = await getSectionSchedulesByNrc(nrcs, idPeriodo);
   return validateSchedule(sections);
 }

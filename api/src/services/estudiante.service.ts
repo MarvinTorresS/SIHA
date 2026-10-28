@@ -157,7 +157,7 @@ export async function getMallaProgreso(
     );
   }
 
-  const periodoActivo = await resolvePeriod();
+  const periodoPredeterminado = await resolvePeriod();
 
   // Todos los cursos de la malla de la carrera del estudiante. Se resuelve
   // vía curso_carrera, no curso.id_carrera -- un mismo curso (ej. LIX410
@@ -225,7 +225,7 @@ export async function getMallaProgreso(
 
   const seccionesOfertadas = await prisma.seccion.findMany({
     where: {
-      id_periodo: periodoActivo.id_periodo,
+      id_periodo: periodoPredeterminado.id_periodo,
       codigo_curso_banner: { in: codigosCicloActual },
     },
     select: { codigo_curso_banner: true },
@@ -483,7 +483,8 @@ export interface CursoOferta {
 }
 
 /**
- * Oferta de cursos del período activo para la carrera del estudiante,
+ * Oferta de cursos de un período (el predeterminado si no se indica) para
+ * la carrera del estudiante,
  * cruzando Banner (seccion) + su historial + el motor de prerrequisitos,
  * en una sola respuesta -- evita que el frontend arme esto con N
  * llamadas por curso.
@@ -502,7 +503,10 @@ export interface CursoOferta {
  *   códigos que el estudiante tiene "aprobado" -- todos aprobados =
  *   "elegible", si falta alguno = "bloqueado" con el detalle de cuáles.
  */
-export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
+export async function getOfertaCiclo(
+  carnet: string,
+  codigoPeriodo?: string
+): Promise<CursoOferta[]> {
   const estudiante = await prisma.estudiante.findUnique({
     where: { carnet },
     include: { carrera: true },
@@ -511,7 +515,7 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
     throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
   }
 
-  const periodoActivo = await resolvePeriod();
+  const periodo = await resolvePeriod(codigoPeriodo);
 
   const cursosCarrera = await prisma.curso_carrera.findMany({
     where: { id_carrera: estudiante.id_carrera },
@@ -537,7 +541,7 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
   const codigos = cursosCandidatos.map((c) => c.curso.codigo);
 
   const todasLasSecciones = await prisma.seccion.findMany({
-    where: { id_periodo: periodoActivo.id_periodo, codigo_curso_banner: { in: codigos } },
+    where: { id_periodo: periodo.id_periodo, codigo_curso_banner: { in: codigos } },
     include: { profesor: true, horario_bloque: true },
     orderBy: { numero_seccion: "asc" },
   });
@@ -707,13 +711,17 @@ export class SeccionNoEncontradaError extends Error {}
  * generales/optativas), NINGÚN curso del lote se confirma -- evita una
  * matrícula parcial silenciosa.
  */
-export async function confirmarMatricula(carnet: string, nrcs: string[]): Promise<void> {
+export async function confirmarMatricula(
+  carnet: string,
+  nrcs: string[],
+  codigoPeriodo?: string
+): Promise<void> {
   const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
   if (!estudiante) {
     throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
   }
 
-  const periodoActivo = await resolvePeriod();
+  const periodo = await resolvePeriod(codigoPeriodo);
 
   await prisma.$transaction(async (tx) => {
     let generalesActuales = await tx.historial_curso.count({
@@ -739,12 +747,12 @@ export async function confirmarMatricula(carnet: string, nrcs: string[]): Promis
       // findFirst, no findUnique: la constraint real es (nrc, id_periodo),
       // no nrc solo (ver horario.routes.ts).
       const seccion = await tx.seccion.findFirst({
-        where: { nrc, id_periodo: periodoActivo.id_periodo },
+        where: { nrc, id_periodo: periodo.id_periodo },
         include: { curso: true },
       });
       if (!seccion || !seccion.curso) {
         throw new SeccionNoEncontradaError(
-          `No se encontró la sección con NRC ${nrc} en el período activo`
+          `No se encontró la sección con NRC ${nrc} en el período ${periodo.codigo}`
         );
       }
       const curso = seccion.curso;
@@ -820,12 +828,12 @@ export async function confirmarMatricula(carnet: string, nrcs: string[]): Promis
           id_curso: curso.id_curso,
           estado: "cursando",
           id_seccion: seccion.id_seccion,
-          id_periodo: periodoActivo.id_periodo,
+          id_periodo: periodo.id_periodo,
         },
         update: {
           estado: "cursando",
           id_seccion: seccion.id_seccion,
-          id_periodo: periodoActivo.id_periodo,
+          id_periodo: periodo.id_periodo,
           actualizado_en: new Date(),
         },
       });
@@ -1385,9 +1393,9 @@ export interface SeccionCursando {
 }
 
 /**
- * Secciones confirmadas ("cursando") de un estudiante, para la pantalla
- * Mi Horario -- independiente de Mis Cursos/oferta: lee directo de
- * historial_curso, no de la oferta del período activo, así que no
+ * Secciones confirmadas ("cursando") de un estudiante en un período, para
+ * la pantalla Mi Horario -- independiente de Mis Cursos/oferta: lee directo
+ * de historial_curso, no de la oferta del período, así que no
  * depende de que Banner siga publicando esas secciones para seguir
  * mostrándolas (un curso ya matriculado no debería desaparecer del
  * horario si Banner deja de listarlo).
@@ -1396,14 +1404,25 @@ export interface SeccionCursando {
  * -- sin N+1, a diferencia del patrón actual de Mis Cursos que resuelve
  * cada NRC con una llamada aparte a GET /horarios/nrc/:nrc.
  */
-export async function getSeccionesCursando(carnet: string): Promise<SeccionCursando[]> {
+export async function getSeccionesCursando(
+  carnet: string,
+  codigoPeriodo?: string
+): Promise<SeccionCursando[]> {
   const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
   if (!estudiante) {
     throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
   }
+  const periodo = await resolvePeriod(codigoPeriodo);
 
+  // Solo las matrículas de ESTE período: Mi Horario muestra el calendario
+  // de un ciclo a la vez. confirmarMatricula siempre guarda id_periodo, y
+  // las filas legacy sin período se backfillearon en V10.
   const historial = await prisma.historial_curso.findMany({
-    where: { id_estudiante: estudiante.id_estudiante, estado: "cursando" },
+    where: {
+      id_estudiante: estudiante.id_estudiante,
+      estado: "cursando",
+      id_periodo: periodo.id_periodo,
+    },
     include: {
       curso: true,
       seccion: { include: { profesor: true, horario_bloque: true } },

@@ -5,6 +5,8 @@ import {
   NrcNotFoundError,
 } from "../services/horario.service";
 import { prisma } from "../db";
+import { readPeriodQuery, resolvePeriod } from "../services/periodo.service";
+import { respondPeriodError } from "../middleware/periodErrors";
 
 const router = Router();
 
@@ -25,14 +27,16 @@ function timeToHourString(value: Date): string {
  * Útil para optativos y cursos fuera de ciclo donde el estudiante
  * elige manualmente entre varias secciones.
  *
- * Ejemplo: GET /api/horarios/secciones/EIF425O
+ * Query opcional: ?periodo=<codigo> (default: el período predeterminado).
+ * Ejemplo: GET /api/horarios/secciones/EIF425O?periodo=202710
  */
 router.get("/secciones/:codigo", async (req: Request, res: Response) => {
   try {
     const codigo = (req.params as Record<string, string>).codigo.toUpperCase();
+    const periodo = await resolvePeriod(readPeriodQuery(req.query.periodo));
 
     const secciones = await prisma.seccion.findMany({
-      where: { codigo_curso_banner: codigo },
+      where: { codigo_curso_banner: codigo, id_periodo: periodo.id_periodo },
       include: {
         horario_bloque: true,
         profesor: true,
@@ -68,6 +72,7 @@ router.get("/secciones/:codigo", async (req: Request, res: Response) => {
 
     res.json(result);
   } catch (err) {
+    if (respondPeriodError(err, res)) return;
     console.error(`GET /api/horarios/secciones/${req.params.codigo}:`, err);
     res.status(500).json({ error: "Error interno del servidor" });
   }
@@ -76,16 +81,17 @@ router.get("/secciones/:codigo", async (req: Request, res: Response) => {
  * GET /api/horarios/nrc/:nrc
  * Devuelve una sección individual por su NRC.
  *
- * Se usa findFirst en vez de findUnique porque la constraint unique
- * real en la BD es (nrc, id_periodo), no nrc solo. Para este endpoint
- * alcanza con buscar por nrc y asumir un solo período activo.
+ * Query opcional: ?periodo=<codigo> (default: el período predeterminado).
+ * La constraint unique real es (nrc, id_periodo), no nrc solo: el mismo
+ * NRC puede existir en dos períodos, por eso se filtra por período.
  */
 router.get("/nrc/:nrc", async (req: Request, res: Response) => {
   try {
     const nrc = (req.params as Record<string, string>).nrc;
+    const periodo = await resolvePeriod(readPeriodQuery(req.query.periodo));
 
-    const seccion = await prisma.seccion.findFirst({
-      where: { nrc },
+    const seccion = await prisma.seccion.findUnique({
+      where: { nrc_id_periodo: { nrc, id_periodo: periodo.id_periodo } },
       include: {
         horario_bloque: true,
         profesor: true,
@@ -120,6 +126,7 @@ router.get("/nrc/:nrc", async (req: Request, res: Response) => {
 
     res.json(result);
   } catch (err) {
+    if (respondPeriodError(err, res)) return;
     console.error(`GET /api/horarios/nrc/${req.params.nrc}:`, err);
     res.status(500).json({ error: "Error interno del servidor" });
   }
@@ -133,8 +140,9 @@ router.get("/nrc/:nrc", async (req: Request, res: Response) => {
  * cursos fuera de ciclo). Devuelve si hay conflictos de horario y el
  * detalle de cada uno.
  *
- * Devuelve 400 si el body no trae un array de NRCs válido, o si
- * alguno de los NRCs no existe en la BD.
+ * Query opcional: ?periodo=<codigo> (default: el período predeterminado).
+ * Devuelve 400 si el body no trae un array de NRCs válido, si el período
+ * es inválido, o si alguno de los NRCs no existe en ese período.
  */
 router.post("/validar", async (req: Request, res: Response) => {
   try {
@@ -152,7 +160,8 @@ router.post("/validar", async (req: Request, res: Response) => {
       return;
     }
 
-    const result = await validateScheduleByNrc(nrcs);
+    const periodo = await resolvePeriod(readPeriodQuery(req.query.periodo));
+    const result = await validateScheduleByNrc(nrcs, periodo.id_periodo);
     res.json(result);
   } catch (err) {
     if (err instanceof NrcNotFoundError) {
@@ -162,6 +171,7 @@ router.post("/validar", async (req: Request, res: Response) => {
       });
       return;
     }
+    if (respondPeriodError(err, res)) return;
 
     console.error("POST /api/horarios/validar:", err);
     res.status(500).json({ error: "Error interno del servidor" });

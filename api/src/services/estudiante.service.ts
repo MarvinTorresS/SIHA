@@ -7,7 +7,7 @@ import {
   type MissingPrerequisite,
   type PeriodRef,
 } from "./elegibilidad.service";
-import { resolvePeriod } from "./periodo.service";
+import { resolvePeriod, toPeriodRef } from "./periodo.service";
 
 const prisma = new PrismaClient();
 
@@ -57,6 +57,10 @@ export interface CursoConProgreso {
   // una sección para cursos aprobados históricos sin ese dato, ni para
   // pendiente/sin_seccion, que por definición no tienen sección propia.
   seccion: SeccionInfo | null;
+  // Solo presente en estado "cursando": el período en que el estudiante
+  // está matriculado (historial_curso.id_periodo). El frontend muestra su
+  // nombre cuando difiere de periodoPredeterminado.
+  periodoCursando: PeriodRef | null;
 }
 
 export interface SemestreProgreso {
@@ -72,6 +76,9 @@ export interface MallaProgresoResponse {
     nombre: string;
     cicloActualId: string;
   };
+  // Período predeterminado (el que está en curso), contra el que se
+  // calcula "sin_seccion" y contra el que se compara periodoCursando.
+  periodoPredeterminado: PeriodRef;
   carrera: {
     idCarrera: number;
     sigla: string;
@@ -131,6 +138,14 @@ function formatHora(fecha: Date): string {
   return `${horas}:${minutos}`;
 }
 
+/** Período de una fila 'cursando' (null en cualquier otro estado). */
+function periodoDeCursando(
+  fila: { estado: string; periodo: { codigo: string; nombre: string } | null } | undefined
+): PeriodRef | null {
+  if (fila?.estado !== "cursando" || !fila.periodo) return null;
+  return toPeriodRef(fila.periodo);
+}
+
 /**
  * Calcula la malla completa de un estudiante con el estado resuelto de
  * cada curso (aprobado / cursando / sin_seccion / pendiente).
@@ -139,7 +154,8 @@ function formatHora(fecha: Date): string {
  * un curso queda en sin_seccion cuando, simultáneamente:
  *   1. Pertenece al ciclo_actual_id del estudiante (según su avance real).
  *   2. No tiene fila en historial_curso (no aprobado, no cursando).
- *   3. No existe ninguna `seccion` ofertada para ese curso en el periodo activo.
+ *   3. No existe ninguna `seccion` ofertada para ese curso en el período
+ *      predeterminado (el que está en curso, ver resolvePeriod).
  * Si existe oferta pero el estudiante no se matriculó, es "pendiente" normal,
  * no "sin_seccion" -- ese caso no es un problema de oferta, es simplemente
  * un curso futuro/no tomado.
@@ -208,6 +224,7 @@ export async function getMallaProgreso(
     where: { id_estudiante: estudiante.id_estudiante },
     include: {
       curso: true,
+      periodo: true,
       seccion: {
         include: {
           profesor: true,
@@ -289,6 +306,7 @@ export async function getMallaProgreso(
       cursoRealCodigo: null,
       cursoRealNombre: null,
       seccion: seccionInfo,
+      periodoCursando: periodoDeCursando(filaHistorial),
     };
   });
 
@@ -314,6 +332,7 @@ export async function getMallaProgreso(
     slot.nota = asignacion.nota?.toString() ?? null;
     slot.cursoRealCodigo = asignacion.curso.codigo;
     slot.cursoRealNombre = asignacion.curso.nombre;
+    slot.periodoCursando = periodoDeCursando(asignacion);
     slot.seccion = asignacion.seccion
       ? {
           nrc: asignacion.seccion.nrc,
@@ -360,6 +379,7 @@ export async function getMallaProgreso(
     slot.cursoRealCodigo = fuente.codigo;
     slot.cursoRealNombre = fuente.nombre;
     slot.seccion = fuente.seccion;
+    slot.periodoCursando = fuente.periodoCursando;
   }
 
   // Agrupación por ciclo, preservando el orden ya resuelto por la query
@@ -414,6 +434,7 @@ export async function getMallaProgreso(
       nombre: estudiante.nombre,
       cicloActualId: estudiante.ciclo_actual_id,
     },
+    periodoPredeterminado: toPeriodRef(periodoPredeterminado),
     carrera: {
       idCarrera: estudiante.carrera.id_carrera,
       sigla: estudiante.carrera.sigla,

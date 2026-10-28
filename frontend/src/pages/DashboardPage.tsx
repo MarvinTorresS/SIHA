@@ -11,6 +11,7 @@ import {
   MapPin,
 } from "lucide-react"
 import { resolverArea, codigoVisible } from "@/lib/curso-area"
+import { nombrePeriodoSiDistinto } from "@/lib/periodo"
 import { Header } from "@/components/layout/Header"
 import { EstadoBadge } from "@/components/shared/EstadoBadge"
 import { useAuthStore } from "@/store/authStore"
@@ -58,7 +59,14 @@ function StatCard({ icon: Icon, iconClassName, value, label, sublabel }: StatCar
 // Card de curso matriculado
 // -----------------------------------------------------------------------
 
-function CursoMatriculadoCard({ curso }: { curso: CursoConProgreso }) {
+function CursoMatriculadoCard({
+  curso,
+  otroPeriodo,
+}: {
+  curso: CursoConProgreso
+  /** Nombre del ciclo si la matrícula NO es del ciclo en curso. */
+  otroPeriodo: string | null
+}) {
   const esSinSeccion = curso.estado === "sin_seccion"
   const area = resolverArea(curso.codigo)
 
@@ -91,6 +99,10 @@ function CursoMatriculadoCard({ curso }: { curso: CursoConProgreso }) {
             {curso.creditos} cr
           </span>
         </div>
+
+        {otroPeriodo && (
+          <p className="text-xs text-muted-foreground">Cursando en {otroPeriodo}</p>
+        )}
 
         {curso.seccion ? (
           <div className="space-y-1.5 pt-1 border-t border-border/60">
@@ -163,7 +175,14 @@ export function DashboardPage() {
   const cursosMatriculados = todosLosCursos.filter(
     (c) => (c.estado === "cursando" || c.estado === "sin_seccion") && !esSlotGeneralCubierto(c)
   )
-  const creditosCicloActual = cursosMatriculados.reduce(
+  // Con varios ciclos abiertos, un curso puede estar matriculado en un
+  // ciclo futuro (ej. el verano): se lista igual, marcado con su ciclo,
+  // pero no cuenta en "Cursos este ciclo" ni en sus créditos.
+  const codigoPredeterminado = progreso?.periodoPredeterminado.codigo
+  const otroPeriodoDe = (c: CursoConProgreso) =>
+    nombrePeriodoSiDistinto(c.periodoCursando, codigoPredeterminado)
+  const cursosCicloActual = cursosMatriculados.filter((c) => otroPeriodoDe(c) === null)
+  const creditosCicloActual = cursosCicloActual.reduce(
     (sum, c) => sum + Number(c.creditos),
     0
   )
@@ -252,7 +271,7 @@ export function DashboardPage() {
               <StatCard
                 icon={BookOpen}
                 iconClassName="text-estado-sin-seccion"
-                value={cursosMatriculados.length}
+                value={cursosCicloActual.length}
                 label="Cursos este ciclo"
                 sublabel={`${creditosCicloActual} créditos`}
               />
@@ -307,7 +326,9 @@ export function DashboardPage() {
               <CardHeader>
                 <CardTitle>Cursos matriculados actualmente</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {cursosMatriculados.length} cursos · {creditosCicloActual} créditos
+                  {cursosCicloActual.length} cursos · {creditosCicloActual} créditos
+                  {cursosMatriculados.length > cursosCicloActual.length &&
+                    ` · ${cursosMatriculados.length - cursosCicloActual.length} en otros ciclos`}
                 </p>
               </CardHeader>
               <CardContent>
@@ -318,7 +339,11 @@ export function DashboardPage() {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {cursosMatriculados.map((curso) => (
-                      <CursoMatriculadoCard key={curso.idCurso} curso={curso} />
+                      <CursoMatriculadoCard
+                        key={curso.idCurso}
+                        curso={curso}
+                        otroPeriodo={otroPeriodoDe(curso)}
+                      />
                     ))}
                   </div>
                 )}

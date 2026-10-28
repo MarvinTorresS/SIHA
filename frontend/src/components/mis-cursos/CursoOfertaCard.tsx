@@ -175,7 +175,12 @@ export function CursoOfertaCard({
           <p className="text-xs text-muted-foreground">
             Requiere aprobar:{" "}
             <span className="font-medium text-foreground">
-              {curso.prerrequisitosFaltantes.map((p) => codigoVisible(p.code)).join(", ")}
+              {/* "(en curso)": ese prerrequisito está cursando y no cuenta
+                  como aprobado -- el estudiante debe marcarlo en la Malla
+                  cuando lo apruebe. */}
+              {curso.prerrequisitosFaltantes
+                .map((p) => `${codigoVisible(p.code)}${p.enCurso ? " (en curso)" : ""}`)
+                .join(", ")}
             </span>
           </p>
         )}

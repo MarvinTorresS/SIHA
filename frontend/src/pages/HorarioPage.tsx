@@ -3,6 +3,8 @@ import { Link } from "react-router-dom"
 import { CalendarClock, ClipboardList } from "lucide-react"
 import { Header } from "@/components/layout/Header"
 import { CalendarioSemanalGrid } from "@/components/shared/CalendarioSemanalGrid"
+import { PeriodoSelect } from "@/components/shared/PeriodoSelect"
+import { usePeriodoSeleccionado } from "@/hooks/usePeriodoSeleccionado"
 import { useAuthStore } from "@/store/authStore"
 import { miHorarioService } from "@/services/mi-horario.service"
 import { ApiError } from "@/services/api"
@@ -13,8 +15,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 
 /**
  * Mi Horario -- pantalla independiente, accesible en cualquier momento:
- * lee las secciones "cursando" directo de historial_curso (no depende de
- * pasar por Mis Cursos ni de la oferta del período activo). Layout de un
+ * lee las secciones "cursando" del ciclo seleccionado directo de
+ * historial_curso (no depende de pasar por Mis Cursos ni de la oferta).
+ * El ciclo es el mismo que el de Mis Cursos (usePeriodoStore). Layout de un
  * solo panel: solo el calendario, a diferencia de Mis Cursos que además
  * tiene la lista de cursos al lado -- acá no hay nada que elegir, solo
  * consultar lo ya confirmado.
@@ -22,11 +25,19 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 export function HorarioPage() {
   const estudiante = useAuthStore((s) => s.estudiante)
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["secciones-cursando", estudiante?.carnet],
-    queryFn: () => miHorarioService.obtenerSeccionesCursando(estudiante!.carnet),
-    enabled: !!estudiante,
+  const {
+    periodo,
+    isLoading: isLoadingPeriodos,
+    error: errorPeriodos,
+  } = usePeriodoSeleccionado()
+
+  const { data, isLoading, error: errorSecciones } = useQuery({
+    queryKey: ["secciones-cursando", estudiante?.carnet, periodo?.codigo],
+    queryFn: () =>
+      miHorarioService.obtenerSeccionesCursando(estudiante!.carnet, periodo!.codigo),
+    enabled: !!estudiante && !!periodo,
   })
+  const error = errorSecciones ?? errorPeriodos
 
   const creditosTotales =
     data?.reduce((sum, s) => sum + Number(s.creditos), 0) ?? 0
@@ -38,6 +49,8 @@ export function HorarioPage() {
         description={estudiante?.carrera.nombre}
       />
       <main className="flex-1 p-4 md:p-6 space-y-4">
+        <PeriodoSelect className="sm:max-w-xs" />
+
         {error && (
           <Alert variant="destructive">
             <AlertDescription>
@@ -50,7 +63,7 @@ export function HorarioPage() {
           </Alert>
         )}
 
-        {isLoading && (
+        {(isLoading || isLoadingPeriodos) && (
           <Card>
             <CardContent className="p-6">
               <Skeleton className="h-[600px] w-full" />
@@ -63,10 +76,12 @@ export function HorarioPage() {
             <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
               <CalendarClock className="size-10 text-muted-foreground" />
               <div className="space-y-1">
-                <p className="font-semibold">Todavía no tenés cursos matriculados</p>
+                <p className="font-semibold">
+                  No tenés cursos matriculados en {periodo?.nombre}
+                </p>
                 <p className="text-sm text-muted-foreground">
-                  Cuando confirmes tu matrícula en Mis Cursos, tu horario semanal
-                  con NRC, profesor y bloques va a aparecer acá.
+                  Cuando confirmes tu matrícula de este ciclo en Mis Cursos, tu
+                  horario semanal con NRC, profesor y bloques va a aparecer acá.
                 </p>
               </div>
               <Button asChild className="mt-2 gap-1.5">

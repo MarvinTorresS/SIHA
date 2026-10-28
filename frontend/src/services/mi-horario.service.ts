@@ -1,13 +1,16 @@
 import { api } from "./api"
+import { periodoQuery } from "./periodos.service"
 import type { Seccion } from "@/types/seccion"
 
 export const miHorarioService = {
   /**
-   * GET /api/estudiantes/{carnet}/secciones-cursando -- secciones
-   * confirmadas ("cursando") del estudiante, independiente de la oferta
-   * del período activo (a diferencia de estudianteService.obtenerOferta).
+   * GET /api/estudiantes/{carnet}/secciones-cursando?periodo= -- secciones
+   * confirmadas ("cursando") del estudiante en ese período, independiente
+   * de la oferta (a diferencia de estudianteService.obtenerOferta).
    */
-  obtenerSeccionesCursando(carnet: string) {
-    return api.get<Seccion[]>(`/estudiantes/${carnet}/secciones-cursando`)
+  obtenerSeccionesCursando(carnet: string, periodo: string) {
+    return api.get<Seccion[]>(
+      `/estudiantes/${carnet}/secciones-cursando${periodoQuery(periodo)}`
+    )
   },
 }

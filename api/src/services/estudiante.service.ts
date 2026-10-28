@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { getDirectCorequisites, getDirectPrerequisites } from "./prerrequisito.service";
+import { resolvePeriod } from "./periodo.service";
 
 const prisma = new PrismaClient();
 
@@ -80,7 +81,6 @@ export interface MallaProgresoResponse {
 
 // Errores de dominio propios del servicio; el controller los traduce a HTTP.
 export class EstudianteNoEncontradoError extends Error {}
-export class PeriodoActivoInvalidoError extends Error {}
 export class CursoNoEncontradoError extends Error {}
 export class CursoFueraDeCarreraError extends Error {}
 export class CursoNoMarcableError extends Error {}
@@ -157,17 +157,7 @@ export async function getMallaProgreso(
     );
   }
 
-  const periodosActivos = await prisma.periodo.findMany({
-    where: { activo: true },
-  });
-
-  if (periodosActivos.length !== 1) {
-    // Fallo explícito en vez de adivinar cuál periodo usar.
-    throw new PeriodoActivoInvalidoError(
-      `Se esperaba exactamente 1 periodo activo, se encontraron ${periodosActivos.length}`
-    );
-  }
-  const periodoActivo = periodosActivos[0];
+  const periodoActivo = await resolvePeriod();
 
   // Todos los cursos de la malla de la carrera del estudiante. Se resuelve
   // vía curso_carrera, no curso.id_carrera -- un mismo curso (ej. LIX410
@@ -521,13 +511,7 @@ export async function getOfertaCiclo(carnet: string): Promise<CursoOferta[]> {
     throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
   }
 
-  const periodosActivos = await prisma.periodo.findMany({ where: { activo: true } });
-  if (periodosActivos.length !== 1) {
-    throw new PeriodoActivoInvalidoError(
-      `Se esperaba exactamente 1 periodo activo, se encontraron ${periodosActivos.length}`
-    );
-  }
-  const periodoActivo = periodosActivos[0];
+  const periodoActivo = await resolvePeriod();
 
   const cursosCarrera = await prisma.curso_carrera.findMany({
     where: { id_carrera: estudiante.id_carrera },
@@ -729,13 +713,7 @@ export async function confirmarMatricula(carnet: string, nrcs: string[]): Promis
     throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
   }
 
-  const periodosActivos = await prisma.periodo.findMany({ where: { activo: true } });
-  if (periodosActivos.length !== 1) {
-    throw new PeriodoActivoInvalidoError(
-      `Se esperaba exactamente 1 periodo activo, se encontraron ${periodosActivos.length}`
-    );
-  }
-  const periodoActivo = periodosActivos[0];
+  const periodoActivo = await resolvePeriod();
 
   await prisma.$transaction(async (tx) => {
     let generalesActuales = await tx.historial_curso.count({

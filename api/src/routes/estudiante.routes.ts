@@ -10,7 +10,6 @@ import {
   asignarCursoRealASlot,
   desasignarSlotMalla,
   EstudianteNoEncontradoError,
-  PeriodoActivoInvalidoError,
   CursoNoEncontradoError,
   CursoFueraDeCarreraError,
   CursoNoMarcableError,
@@ -22,6 +21,7 @@ import {
   TopeOptativasMatriculaError,
 } from "../services/estudiante.service";
 import { requireAuth, requireOwnCarnet } from "../middleware/requireAuth";
+import { respondPeriodError } from "../middleware/periodErrors";
 
 export const estudianteRouter = Router();
 
@@ -50,10 +50,7 @@ estudianteRouter.get(
       if (err instanceof EstudianteNoEncontradoError) {
         return res.status(404).json({ error: err.message });
       }
-      if (err instanceof PeriodoActivoInvalidoError) {
-        // Error de configuración de datos, no del cliente -> 500.
-        return res.status(500).json({ error: err.message });
-      }
+      if (respondPeriodError(err, res)) return;
       // Red de seguridad; el errorHandler global también lo captura si
       // este bloque se omite, pero se deja explícito por consistencia
       // con el resto de rutas del proyecto.
@@ -88,9 +85,7 @@ estudianteRouter.get(
       if (err instanceof EstudianteNoEncontradoError) {
         return res.status(404).json({ error: err.message });
       }
-      if (err instanceof PeriodoActivoInvalidoError) {
-        return res.status(500).json({ error: err.message });
-      }
+      if (respondPeriodError(err, res)) return;
       console.error("Error en GET /estudiantes/:carnet/oferta", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }
@@ -169,9 +164,7 @@ estudianteRouter.post(
       if (err instanceof TopeOptativasMatriculaError) {
         return res.status(409).json({ error: err.message });
       }
-      if (err instanceof PeriodoActivoInvalidoError) {
-        return res.status(500).json({ error: err.message });
-      }
+      if (respondPeriodError(err, res)) return;
       console.error("Error en POST /estudiantes/:carnet/matricula", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }

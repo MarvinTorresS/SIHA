@@ -85,8 +85,8 @@ def _term(code, name, first_load=False, total=0, with_schedule=0, **cats):
     return t
 
 
-def _summary(terms=(), status="ok", has_changes=None, warnings=0, errors=0,
-             failed_terms=(), fatal_reason=None, active_changes=()):
+def _summary(terms=(), status="ok", has_changes=None, warnings_unexpected=0, errors=0,
+             failed_terms=(), fatal_reason=None, active_changes=(), warnings_expected=0):
     terms = list(terms)
     if has_changes is None:
         has_changes = any(t["has_changes"] for t in terms) or bool(active_changes)
@@ -95,7 +95,9 @@ def _summary(terms=(), status="ok", has_changes=None, warnings=0, errors=0,
         "finished_at": "2026-10-29T12:20:00+00:00",
         "exit_code": 0 if status == "ok" else 1, "status": status,
         "fatal_reason": fatal_reason, "has_changes": has_changes,
-        "warnings": warnings, "errors": errors,
+        "warnings": warnings_expected + warnings_unexpected,
+        "warnings_expected": warnings_expected, "warnings_unexpected": warnings_unexpected,
+        "errors": errors,
         "new_terms": [t["code"] for t in terms if t["is_new"]],
         "failed_terms": list(failed_terms), "active_changes": list(active_changes),
         "terms": terms,
@@ -125,7 +127,8 @@ def _first_run_summary():
             _term("202720", "Ciclo II 2027", first_load=True, total=45, with_schedule=0,
                   new=[_ref(str(62000 + i), "X", "X") for i in range(45)]),
         ],
-        warnings=110,
+        # 109 "sin horarios en Banner" (202710/202720) + 1 sección sin fechas.
+        warnings_expected=109, warnings_unexpected=1,
         active_changes=[{"code": c, "name": n, "active": True}
                         for c, n in [("202695", "Ciclo III (Verano) 2026"),
                                      ("202710", "Ciclo I 2027"), ("202720", "Ciclo II 2027")]],
@@ -181,7 +184,7 @@ def test_formato_de_cambios_agrupa_por_curso_con_nombre():
         _term("202710", "Ciclo I 2027", total=64,
               new=[_ref("1", "EIF206", "Programación II"), _ref("2", "EIF206", "Programación II")],
               schedule_published=[_ref("3", "EIF207", "Estructuras de datos")]),
-    ], warnings=1)
+    ], warnings_unexpected=1)
     msg = nt.format_message(summary, nt.KIND_CHANGES)
     assert msg.splitlines() == [
         "📚 SIHA · ETL 29/oct 06:02",
@@ -398,3 +401,49 @@ def test_filtro_redacta_el_token_en_cualquier_log(caplog):
     finally:
         nt.log.removeFilter(f)
     assert TOKEN not in caplog.text and "bot***/sendMessage" in caplog.text
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Advertencias esperadas / inesperadas
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_solo_advertencias_esperadas_no_llevan_linea_de_aviso():
+    summary = _summary([_term("202620", "Ciclo II 2026", total=10,
+                              new=[_ref("1", "EIF206", "Programación II")])],
+                       warnings_expected=109)
+    msg = nt.format_message(summary, nt.KIND_CHANGES)
+    assert "⚠" not in msg
+    assert "⚠" not in nt.format_message(summary, nt.KIND_HEARTBEAT)
+
+
+def test_mezcla_cuenta_solo_las_inesperadas():
+    summary = _summary([_term("202620", "Ciclo II 2026", total=10,
+                              new=[_ref("1", "EIF206", "Programación II")])],
+                       warnings_expected=109, warnings_unexpected=3)
+    assert nt.format_message(summary, nt.KIND_CHANGES).splitlines()[-1] == "⚠ 3 advertencias"
+
+
+def test_solo_inesperadas_llevan_su_numero():
+    summary = _summary([_term("202620", "Ciclo II 2026", total=10,
+                              new=[_ref("1", "EIF206", "Programación II")])],
+                       warnings_unexpected=2, errors=1)
+    assert nt.format_message(summary, nt.KIND_CHANGES).splitlines()[-1] == "⚠ 2 advertencias · 1 error"
+
+
+def test_resumen_viejo_sin_separacion_cuenta_todas():
+    summary = _summary([], has_changes=False)
+    del summary["warnings_expected"], summary["warnings_unexpected"]
+    summary["warnings"] = 4
+    assert nt.format_message(summary, nt.KIND_HEARTBEAT).endswith("⚠ 4 advertencias")
+
+
+def test_step_summary_muestra_esperadas_e_inesperadas(tmp_path, telegram, monkeypatch):
+    step = tmp_path / "step.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(step))
+    summary = _summary([_term("202620", "Ciclo II 2026", total=10,
+                              new=[_ref("1", "EIF206", "Programación II")])],
+                       warnings_expected=109, warnings_unexpected=1)
+    nt.main(["--summary", str(_write(tmp_path, summary))], now=THURSDAY_NOW)
+    text = step.read_text(encoding="utf-8")
+    assert "Advertencias: 1 inesperadas, 109 esperadas (sin horarios en Banner)" in text
+    assert "⚠ 109" not in telegram[0]["text"] and telegram[0]["text"].endswith("⚠ 1 advertencia")

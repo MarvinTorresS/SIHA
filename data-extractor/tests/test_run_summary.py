@@ -152,6 +152,33 @@ def test_log_counter():
     finally:
         logger.removeHandler(counter)
     assert (counter.warnings, counter.errors) == (2, 2)
+    assert (counter.warnings_expected, counter.warnings_unexpected) == (0, 2)
+
+
+def test_log_counter_separa_esperadas_de_inesperadas():
+    logger = logging.getLogger("test_log_counter_esperadas")
+    counter = LogCounter()
+    logger.addHandler(counter)
+    try:
+        logger.warning("sin horarios", extra=run_summary.EXPECTED_WARNING)
+        logger.warning("sin horarios", extra=run_summary.EXPECTED_WARNING)
+        logger.warning("fecha inválida")
+    finally:
+        logger.removeHandler(counter)
+    assert (counter.warnings_expected, counter.warnings_unexpected, counter.warnings) == (2, 1, 3)
+    data = RunSummary().to_dict(0, counter)
+    assert (data["warnings"], data["warnings_expected"], data["warnings_unexpected"]) == (3, 2, 1)
+
+
+def test_sin_horarios_en_banner_es_una_advertencia_esperada():
+    counter = LogCounter()
+    logging.getLogger().addHandler(counter)
+    try:
+        # Sin bloques utilizables, _replace_schedule avisa y no toca la BD.
+        populate_db._replace_schedule(None, 1, {"crn": "51051", "schedules": []})
+    finally:
+        logging.getLogger().removeHandler(counter)
+    assert (counter.warnings_expected, counter.warnings_unexpected) == (1, 0)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

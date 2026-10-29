@@ -420,3 +420,42 @@ def test_snapshot_prefiere_el_nombre_de_la_malla(conn):
         )
     snap = run_summary.snapshot_term_by_code(conn, term)
     assert snap["99201"].course_name == name
+
+
+def _counted_load(conn, term, sections):
+    counter = LogCounter()
+    logging.getLogger().addHandler(counter)
+    try:
+        _load(conn, term, sections)
+    finally:
+        logging.getLogger().removeHandler(counter)
+    return counter
+
+
+def _with_dates(nrc, start, end):
+    sec = _section(nrc)
+    sec["start_date"], sec["end_date"] = start, end
+    return sec
+
+
+def test_una_seccion_sin_fechas_es_advertencia_esperada(conn):
+    secciones = [_section(str(99300 + i)) for i in range(30)] + [_with_dates("99399", "", "")]
+    counter = _counted_load(conn, "209920", secciones)
+    assert (counter.warnings_expected, counter.warnings_unexpected) == (1, 0)
+    # Sin advertencias inesperadas no hay línea ⚠ en el mensaje.
+    import notify_telegram as nt
+    data = RunSummary().to_dict(0, counter)
+    assert "⚠" not in nt.format_message(data, nt.KIND_HEARTBEAT)
+
+
+def test_superar_el_umbral_de_fechas_es_advertencia_inesperada(conn):
+    # 2 de 10 con fecha inválida (20% > 5%): el umbral avisa como inesperada.
+    secciones = [_section(str(99400 + i)) for i in range(8)] + [
+        _with_dates("99498", "20/07/2099", "14/11/2099"),
+        _with_dates("99499", "20/07/2099", "14/11/2099"),
+    ]
+    counter = _counted_load(conn, "209920", secciones)
+    assert counter.warnings_unexpected == 3  # 2 secciones inválidas + el umbral
+    import notify_telegram as nt
+    data = RunSummary().to_dict(0, counter)
+    assert nt.format_message(data, nt.KIND_HEARTBEAT).endswith("⚠ 3 advertencias")

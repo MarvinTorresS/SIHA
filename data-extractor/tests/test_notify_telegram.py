@@ -127,8 +127,8 @@ def _first_run_summary():
             _term("202720", "Ciclo II 2027", first_load=True, total=45, with_schedule=0,
                   new=[_ref(str(62000 + i), "X", "X") for i in range(45)]),
         ],
-        # 109 "sin horarios en Banner" (202710/202720) + 1 sección sin fechas.
-        warnings_expected=109, warnings_unexpected=1,
+        # 109 "sin horarios en Banner" (202710/202720) + 1 sección sin fechas: todas esperadas.
+        warnings_expected=110, warnings_unexpected=0,
         active_changes=[{"code": c, "name": n, "active": True}
                         for c, n in [("202695", "Ciclo III (Verano) 2026"),
                                      ("202710", "Ciclo I 2027"), ("202720", "Ciclo II 2027")]],
@@ -445,5 +445,5 @@ def test_step_summary_muestra_esperadas_e_inesperadas(tmp_path, telegram, monkey
                        warnings_expected=109, warnings_unexpected=1)
     nt.main(["--summary", str(_write(tmp_path, summary))], now=THURSDAY_NOW)
     text = step.read_text(encoding="utf-8")
-    assert "Advertencias: 1 inesperadas, 109 esperadas (sin horarios en Banner)" in text
+    assert "Advertencias: 1 inesperadas, 109 esperadas (sin horarios o sin fechas en Banner)" in text
     assert "⚠ 109" not in telegram[0]["text"] and telegram[0]["text"].endswith("⚠ 1 advertencia")

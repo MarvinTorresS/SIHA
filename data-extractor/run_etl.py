@@ -5,8 +5,8 @@
 # Flujo:
 #   0. Chequeo de conexión a la BD (SELECT 1, timeout corto). Si falla se
 #      aborta ANTES de pegarle a Banner, con host/puerto/error en el log.
-#   1. Malla: populate_db carga carreras/cursos/prerrequisitos desde
-#      syllabi_normalized.json. Una sola vez.
+#   1. Malla: excel_loader genera syllabi_normalized.json (no está en git)
+#      y populate_db carga carreras/cursos/prerrequisitos. Una sola vez.
 #   2. Descubrimiento de períodos (extractors/terms.py): candidatos
 #      (año actual + siguiente) × {10, 20, 95} ∪ activos en la BD, probados
 #      contra Banner. Override manual: CICLOS=202620,202695.
@@ -31,7 +31,7 @@ import sys
 from datetime import date
 
 from config import CICLOS_OVERRIDE_ENV, LOGS_DIR, DB_HOST, DB_PORT
-from extractors import banner_connector, populate_db
+from extractors import banner_connector, excel_loader, populate_db
 from extractors.terms import discover_terms, parse_override
 
 logging.basicConfig(
@@ -68,7 +68,11 @@ def run(today: date) -> int:
     override = parse_override(os.getenv(CICLOS_OVERRIDE_ENV))
     active_in_db = [codigo for codigo, activo in periodos if activo]
 
-    log.info("▶ Paso 1: malla (populate_db)")
+    log.info("▶ Paso 1: malla (excel_loader + populate_db)")
+    if not excel_loader.run():
+        log.error("✗ excel_loader no generó la malla, se aborta")
+        return 1
+
     conn = populate_db._connect()
     conn.autocommit = False
     failed_terms: list[str] = []

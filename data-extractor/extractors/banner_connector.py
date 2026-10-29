@@ -33,6 +33,7 @@ from config import (
     LOGS_DIR,
     BANNER_PROGRAM_TO_CARRERA,
     CAMPUS_COTO_FILTER_TEXT,
+    OUTPUT_NORMALIZED_DIR,
 )
 
 logging.basicConfig(
@@ -418,7 +419,10 @@ def _load_syllabus_codes(force_reload: bool = False) -> dict[str, set[str]]:
     global _syllabus_codes_cache
     if _syllabus_codes_cache is not None and not force_reload:
         return _syllabus_codes_cache
-    path = Path("output/normalized/syllabi_normalized.json")
+    # Ruta absoluta (no relativa al cwd): antes solo funcionaba corriendo
+    # desde data-extractor/. La genera excel_loader.py (run_etl.py lo
+    # corre primero, así que existe también en GitHub Actions).
+    path = OUTPUT_NORMALIZED_DIR / "syllabi_normalized.json"
     with open(path, encoding="utf-8") as f:
         courses = json.load(f)
     codes: dict[str, set[str]] = defaultdict(set)

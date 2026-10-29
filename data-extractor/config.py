@@ -41,6 +41,29 @@ BANNER_SEARCH_RESULTS_PATH   = "/StudentRegistrationSsb/ssb/searchResults/search
 BANNER_CLASS_DETAILS_PATH    = "/StudentRegistrationSsb/ssb/searchResults/getClassDetails"
 BANNER_RESTRICTIONS_PATH     = "/StudentRegistrationSsb/ssb/searchResults/getRestrictions"
 
+BANNER_GET_TERMS_PATH = "/StudentRegistrationSsb/ssb/classSearch/getTerms"
+
+# Códigos de período de Banner: YYYYNN. Solo se
+# manejan ciclos semestrales y el verano; cualquier otro sufijo
+# (cuatrimestres 03/13/23, trimestres 05/15/25, anual 00) es un error
+# explícito, nunca una carga silenciosa.
+# Verano = sufijo 95, NO 30 (precedente: 202595 "CICLO III (VERANO) 2025").
+TERM_SUFFIXES: dict[str, tuple[int, str]] = {
+    "10": (1, "Ciclo I"),
+    "20": (2, "Ciclo II"),
+    "95": (3, "Ciclo III (Verano)"),
+}
+
+# Override manual del descubrimiento: lista de códigos separada por comas
+# (ej. CICLOS=202620,202695). Vacío = descubrir solo.
+CICLOS_OVERRIDE_ENV = "CICLOS"
+
+# Código de campus de Banner para Campus Coto (descripción "SRB: Campus
+# Coto"). Verificado el 28/oct/2026: searchResults con txt_campus=BC trae
+# TODAS las secciones de Coto que también aparecen buscando curso por
+# curso (63 de 63 en 202620), así que sirve para descubrir períodos.
+BANNER_CAMPUS_COTO_CODE = "BC"
+
 # Ciclo académico activo. Formato: YYYYNN donde NN es el número de ciclo.
 # Actualizar antes de cada nuevo período de matrícula.
 CICLO_ACTIVO = "202620"

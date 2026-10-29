@@ -669,7 +669,13 @@ def _insert_general_courses_from_banner(conn):
             INSERT INTO curso (codigo, nombre, creditos,
                                id_carrera, es_general, creditos_fuente,
                                ciclo_id, ciclo_nombre, es_optativo)
-            SELECT DISTINCT
+            -- DISTINCT ON (código), no DISTINCT de la fila completa: Banner
+            -- publica el mismo general con el título en distinta
+            -- capitalización según la sección (ej. EGA121 "Arte y
+            -- pensamiento..." vs "ARTE Y PENSAMIENTO..."), y dos filas con
+            -- el mismo código revientan el ON CONFLICT ("cannot affect row
+            -- a second time"). Se toma la sección actualizada más reciente.
+            SELECT DISTINCT ON (s.codigo_curso_banner)
                 s.codigo_curso_banner,
                 s.titulo,
                 s.creditos,
@@ -682,6 +688,7 @@ def _insert_general_courses_from_banner(conn):
             FROM seccion s
             WHERE s.es_general = true
               AND s.codigo_curso_banner NOT IN (SELECT codigo FROM curso)
+            ORDER BY s.codigo_curso_banner, s.actualizado_en DESC, s.id_seccion DESC
             ON CONFLICT (codigo) DO UPDATE SET
                 nombre = EXCLUDED.nombre,
                 creditos = EXCLUDED.creditos,

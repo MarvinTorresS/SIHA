@@ -14,6 +14,9 @@
 #      período falla se loggea, se sigue con los demás y el proceso termina
 #      con exit code != 0.
 #   4. Regla de periodo.activo (extractors/terms.decide_active).
+#   5. Siempre, incluso en salidas tempranas: output/run_summary.json con
+#      los cambios de la corrida (extractors/run_summary.py). Lo leen
+#      notify_telegram.py y el workflow; --check-db no lo escribe.
 #
 # La protección que antes daba el guard de meses (no correr fuera de
 # matrícula) la da ahora la regla de 0 secciones: un Banner vacío o con
@@ -31,8 +34,9 @@ import sys
 from datetime import date
 
 from config import CICLOS_OVERRIDE_ENV, LOGS_DIR, DB_HOST, DB_PORT
-from extractors import banner_connector, excel_loader, populate_db
-from extractors.terms import discover_terms, parse_override
+from extractors import banner_connector, excel_loader, populate_db, run_summary
+from extractors.run_summary import RunSummary
+from extractors.terms import describe_term, discover_terms, parse_override
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,10 +64,12 @@ def check_db() -> list[tuple[str, bool]] | None:
     return periodos
 
 
-def run(today: date) -> int:
+def run(today: date, summary: RunSummary) -> int:
     periodos = check_db()
     if periodos is None:
+        summary.mark_fatal(run_summary.FATAL_DB_UNAVAILABLE)
         return 2
+    known_terms = {codigo for codigo, _ in periodos}
 
     override = parse_override(os.getenv(CICLOS_OVERRIDE_ENV))
     active_in_db = [codigo for codigo, activo in periodos if activo]
@@ -71,6 +77,7 @@ def run(today: date) -> int:
     log.info("▶ Paso 1: malla (excel_loader + populate_db)")
     if not excel_loader.run():
         log.error("✗ excel_loader no generó la malla, se aborta")
+        summary.mark_fatal(run_summary.FATAL_SYLLABUS)
         return 1
 
     conn = populate_db._connect()
@@ -93,8 +100,16 @@ def run(today: date) -> int:
             log.info(f"▶ Paso 3: período {term}")
             try:
                 extraction = banner_connector.extract_term(term)
+                # Fotos antes/después en la MISMA transacción del período,
+                # la de después justo antes del commit.
+                before = run_summary.snapshot_term_by_code(conn, term)
                 stats = populate_db.load_term(conn, term, extraction, career_map)
+                after = run_summary.snapshot_term_by_code(conn, term)
                 conn.commit()
+                summary.record_term(
+                    term, describe_term(term)[2], run_summary.diff_term(before, after),
+                    is_new=term not in known_terms,
+                )
                 if stats.dates_blocked:
                     untrusted_dates.add(term)
                 log.info(f"  ✓ {term}: {stats.total} secciones cargadas y confirmadas")
@@ -102,15 +117,24 @@ def run(today: date) -> int:
                 conn.rollback()
                 log.exception(f"  ✗ {term}: falló, se revierte solo este período")
                 failed_terms.append(term)
+                summary.record_failed_term(term, describe_term(term)[2])
 
         log.info("▶ Paso 4: regla de periodo.activo")
+        with conn.cursor() as cur:
+            active_before = run_summary.snapshot_periods(cur)
         populate_db.apply_active_rule(conn, statuses, today, untrusted_dates)
+        with conn.cursor() as cur:
+            active_after = run_summary.snapshot_periods(cur)
+            cur.execute("SELECT codigo, nombre FROM periodo")
+            names = dict(cur.fetchall())
         conn.commit()
+        summary.record_active_changes(active_before, active_after, names)
 
         populate_db.quality_report(conn)
     except Exception:
         conn.rollback()
         log.exception("✗ ETL falló")
+        summary.mark_fatal(run_summary.FATAL_UNEXPECTED)
         return 1
     finally:
         conn.close()
@@ -132,7 +156,36 @@ def main() -> int:
 
     if args.check_db:
         return 0 if check_db() is not None else 2
-    return run(date.today())
+    return run_with_summary(date.today())
+
+
+def run_with_summary(today: date, summary_path=None) -> int:
+    """
+    Corre el ETL y escribe el resumen SIEMPRE (finally), también si run()
+    sale temprano o explota. El resumen anterior se borra al arrancar: si
+    el proceso muere sin llegar al finally (kill, timeout), no queda
+    ninguno y notify_telegram.py avisa que el ETL murió antes de generarlo.
+    """
+    path = summary_path or run_summary.SUMMARY_PATH
+    run_summary.remove_summary(path)
+    summary = RunSummary()
+    counter = run_summary.LogCounter()
+    logging.getLogger().addHandler(counter)
+    exit_code = None
+    try:
+        exit_code = run(today, summary)
+    except Exception:
+        log.exception("✗ ETL falló antes de terminar")
+        summary.mark_fatal(run_summary.FATAL_UNEXPECTED)
+        exit_code = 1
+    finally:
+        if exit_code is None:  # KeyboardInterrupt / SystemExit
+            summary.mark_fatal(run_summary.FATAL_UNEXPECTED)
+        logging.getLogger().removeHandler(counter)
+        data = summary.to_dict(exit_code, counter)
+        run_summary.write_summary(data, path)
+        log.info(f"Resumen: {path} (status={data['status']}, cambios={data['has_changes']})")
+    return exit_code
 
 
 if __name__ == "__main__":

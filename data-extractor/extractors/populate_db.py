@@ -54,6 +54,7 @@ from config import (
 from extractors.terms import (
     PeriodState, TermStatus, decide_active, describe_term,
 )
+from extractors.run_summary import EXPECTED_WARNING
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -619,7 +620,12 @@ def _replace_schedule(cur, section_id: int, sec: dict) -> None:
         blocks.append((section_id, key[0], start_time, end_time, h.get("classroom", "")))
 
     if not blocks:
-        log.warning(f"  ⚠ NRC {sec['crn']}: sin horarios en Banner, se conservan los bloques existentes")
+        # Esperada: es lo normal en un período cuyo horario no se publicó
+        # aún; el resumen ya lo muestra como "(0 con horario)".
+        log.warning(
+            f"  ⚠ NRC {sec['crn']}: sin horarios en Banner, se conservan los bloques existentes",
+            extra=EXPECTED_WARNING,
+        )
         return
 
     cur.execute("DELETE FROM horario_bloque WHERE id_seccion = %s", (section_id,))
@@ -686,7 +692,12 @@ def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, d
                 stats.dates_valid += 1
             elif dates.missing:
                 stats.dates_missing += 1
-                log.warning(f"  ⚠ NRC {sec['crn']}: Banner no trae fechas, se conservan las existentes")
+                # Esperada: es un dato de Banner, no un fallo del ETL. El caso
+                # sistémico (el parser falla en muchas) lo cubre el umbral.
+                log.warning(
+                    f"  ⚠ NRC {sec['crn']}: Banner no trae fechas, se conservan las existentes",
+                    extra=EXPECTED_WARNING,
+                )
             else:
                 stats.dates_invalid += 1
                 log.warning(f"  ⚠ NRC {sec['crn']}: {dates.problem}, se conservan las fechas existentes")

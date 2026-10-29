@@ -8,7 +8,14 @@ name: ETL Banner + Malla (automatizado)
 # - ciclos: fuerza períodos puntuales (ej. "202620,202695"), sin
 #   descubrimiento. Igual respeta "(View Only)".
 # - solo_verificar_bd: solo prueba la conexión a la BD y lista los
-#   períodos, sin pegarle a Banner ni escribir nada.
+#   períodos, sin pegarle a Banner ni escribir nada. No notifica.
+# - probar_telegram: manda "SIHA ETL: notificaciones OK" y termina, sin
+#   correr el ETL ni tocar la BD (job probar-telegram).
+#
+# Avisos (notify_telegram.py, en un paso aparte que corre siempre): fallo o
+# fallo parcial -> mensaje con link a la corrida; cambios -> resumen; lunes
+# sin cambios -> latido; corrida manual sin cambios -> "sin cambios". Si el
+# envío falla, falla ese paso y no el del ETL.
 on:
   schedule:
     # 12:00 UTC = 06:00 hora Costa Rica (UTC-6)
@@ -21,6 +28,10 @@ on:
         default: ""
       solo_verificar_bd:
         description: "Solo verificar la conexión a la BD (python run_etl.py --check-db)"
+        type: boolean
+        default: false
+      probar_telegram:
+        description: "Solo mandar un mensaje de prueba a Telegram (no corre el ETL)"
         type: boolean
         default: false
 
@@ -38,7 +49,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/etl.yml/enable"
 
+  # Prueba del canal: sin secrets de la BD en el entorno y sin pip install
+  # (notify_telegram.py usa solo la biblioteca estándar).
+  probar-telegram:
+    if: ${{ github.event.inputs.probar_telegram == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: data-extractor
+    steps:
+      - name: Checkout del repo
+        uses: actions/checkout@v4
+
+      - name: Mensaje de prueba
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 notify_telegram.py --test
+
   etl:
+    if: ${{ github.event.inputs.probar_telegram != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -70,8 +102,11 @@ jobs:
       # run_etl.py genera syllabi_normalized.json (excel_loader) antes de
       # extraer: no está en git y sin él banner_connector no puede correr.
       # Antes de Banner hace el mismo chequeo de conexión que --check-db.
+      # El timeout va en el PASO, no en el job: si se corta, el paso
+      # Notificar (if: always()) igual corre y avisa que no hay resumen.
       - name: Ejecutar ETL
         if: ${{ github.event.inputs.solo_verificar_bd != 'true' }}
+        timeout-minutes: 60
         env:
           CICLOS: ${{ github.event.inputs.ciclos }}
         run: python run_etl.py
@@ -83,3 +118,13 @@ jobs:
           name: etl-logs
           path: data-extractor/logs/
           retention-days: 14
+
+      # Paso aparte: si falla el envío, este paso queda rojo y el del ETL
+      # sigue verde. Lee output/run_summary.json; si no existe, avisa que
+      # el ETL murió antes de generarlo. Escribe en $GITHUB_STEP_SUMMARY.
+      - name: Notificar (Telegram)
+        if: ${{ always() && github.event.inputs.solo_verificar_bd != 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 notify_telegram.py --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

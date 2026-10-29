@@ -167,177 +167,197 @@ export function CalendarioSemanalGrid({
     return () => resizeObserver.disconnect()
   }, [actualizarSombras, bloquesPorDia])
 
-  return (
-    <div className="relative rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-      <div
-        ref={scrollRef}
-        onScroll={actualizarSombras}
-        className="overflow-x-auto overscroll-x-contain"
-      >
-        <div
-          className="grid min-w-max border-b border-border"
-          style={{
-            gridTemplateColumns: `52px repeat(7, minmax(${DIA_MIN_WIDTH}px, 1fr))`,
-          }}
-        >
-          {/* Columna de horas del header: vacía pero sticky, para que la
-              esquina superior-izquierda quede fija junto con la columna
-              de horas del cuerpo mientras el resto se desliza. */}
-          <div className="sticky left-0 z-10 bg-card" />
-          {DIAS.map((dia) => (
-            <div
-              key={dia}
-              className="border-l border-border px-1 py-2.5 text-center text-xs font-semibold"
-            >
-              {dia}
-            </div>
-          ))}
-        </div>
+  // Secciones sin ningún bloque (Banner todavía no publicó el horario, ej.
+  // ciclos futuros): no tienen dónde dibujarse en la grilla, así que se
+  // listan aparte en texto atenuado -- sin ámbar, que acá es exclusivo de
+  // conflictos. Tampoco participan en la detección de choques (no tienen
+  // bloques que se solapen).
+  const sinHorario = useMemo(() => secciones.filter((s) => s.horarios.length === 0), [secciones])
 
+  return (
+    <div className="space-y-2">
+      {sinHorario.length > 0 && (
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <CalendarClock className="mt-px size-3.5 shrink-0" />
+          <span>
+            Horario aún no publicado:{" "}
+            {sinHorario
+              .map((s) => `${codigoVisible(s.codigoCurso)} (NRC ${s.nrc})`)
+              .join(", ")}
+          </span>
+        </p>
+      )}
+      <div className="relative rounded-xl border border-border bg-card shadow-sm overflow-hidden">
         <div
-          className="relative grid min-w-max"
-          style={{
-            height: ALTO_TOTAL,
-            gridTemplateColumns: `52px repeat(7, minmax(${DIA_MIN_WIDTH}px, 1fr))`,
-          }}
+          ref={scrollRef}
+          onScroll={actualizarSombras}
+          className="overflow-x-auto overscroll-x-contain"
         >
-          {/* sticky left-0: fija el eje de horas mientras los días se
-              deslizan por debajo. bg-card propio (no heredado) para que
-              los bloques de curso no se transparenten al pasar debajo. */}
-          <div className="sticky left-0 z-10 bg-card">
-            {horas.map((h) => (
+          <div
+            className="grid min-w-max border-b border-border"
+            style={{
+              gridTemplateColumns: `52px repeat(7, minmax(${DIA_MIN_WIDTH}px, 1fr))`,
+            }}
+          >
+            {/* Columna de horas del header: vacía pero sticky, para que la
+                esquina superior-izquierda quede fija junto con la columna
+                de horas del cuerpo mientras el resto se desliza. */}
+            <div className="sticky left-0 z-10 bg-card" />
+            {DIAS.map((dia) => (
               <div
-                key={h}
-                className="absolute right-1.5 -translate-y-1/2 text-[10px] text-muted-foreground"
-                style={{ top: (h - HORA_INICIO) * PX_POR_HORA }}
+                key={dia}
+                className="border-l border-border px-1 py-2.5 text-center text-xs font-semibold"
               >
-                {h}:00
+                {dia}
               </div>
             ))}
           </div>
 
-          {DIAS.map((dia) => {
-            const { items, maxCarriles } = asignarCarriles(bloquesPorDia.get(dia) ?? [])
+          <div
+            className="relative grid min-w-max"
+            style={{
+              height: ALTO_TOTAL,
+              gridTemplateColumns: `52px repeat(7, minmax(${DIA_MIN_WIDTH}px, 1fr))`,
+            }}
+          >
+            {/* sticky left-0: fija el eje de horas mientras los días se
+                deslizan por debajo. bg-card propio (no heredado) para que
+                los bloques de curso no se transparenten al pasar debajo. */}
+            <div className="sticky left-0 z-10 bg-card">
+              {horas.map((h) => (
+                <div
+                  key={h}
+                  className="absolute right-1.5 -translate-y-1/2 text-[10px] text-muted-foreground"
+                  style={{ top: (h - HORA_INICIO) * PX_POR_HORA }}
+                >
+                  {h}:00
+                </div>
+              ))}
+            </div>
 
-            return (
-              <div key={dia} className="relative border-l border-border">
-                {horas.map((h) => (
-                  <div
-                    key={h}
-                    className="absolute inset-x-0 border-t border-border/50"
-                    style={{ top: (h - HORA_INICIO) * PX_POR_HORA }}
-                  />
-                ))}
+            {DIAS.map((dia) => {
+              const { items, maxCarriles } = asignarCarriles(bloquesPorDia.get(dia) ?? [])
 
-                {items.map((b) => {
-                  const area = resolverArea(b.codigoCurso)
-                  const chocaCon = conflictoPorNrc.get(b.nrc) ?? []
-                  const enConflicto = chocaCon.length > 0
-                  const ancho = 100 / maxCarriles
-                  const izquierda = b.lane * ancho
-                  // Alto mínimo para que TODA la información entre sin
-                  // cortarse: código, título (hasta 2 líneas), profesor
-                  // (hasta 2 líneas también -- se envuelve en vez de
-                  // truncar), NRC y horario -- hasta 7 líneas ~13px c/u +
-                  // padding, 8 si además hay que sumar "vs OTRO".
-                  // Legibilidad antes que compacidad -- el bloque crece
-                  // más allá de su franja horaria real si hace falta.
-                  const altoMinimo = enConflicto ? 124 : 110
-
-                  const bloqueEl = (
+              return (
+                <div key={dia} className="relative border-l border-border">
+                  {horas.map((h) => (
                     <div
-                      className={`absolute rounded-md border px-1.5 py-1.5 text-[11px] leading-tight ${
-                        enConflicto
-                          ? "border-warning bg-warning-bg text-warning"
-                          : `border-current ${area.badgeClassName}`
-                      }`}
-                      style={{
-                        top: b.top,
-                        // minHeight, no height fijo: si el profesor
-                        // necesita más líneas de las estimadas, la caja
-                        // debe crecer con el contenido real, no recortarlo
-                        // ni dejarlo desbordar por encima del borde.
-                        minHeight: Math.max(b.height, altoMinimo),
-                        left: `${izquierda}%`,
-                        width: `calc(${ancho}% - 4px)`,
-                        zIndex: enConflicto ? 1 : undefined,
-                      }}
-                    >
-                      {/* Grilla de 2 columnas (ícono, texto) para las 5
-                          filas -- la columna de ícono tiene ancho FIJO
-                          (20px, el mínimo que entra "NRC" sin partirse),
-                          así el texto de cada fila arranca exactamente en
-                          la misma posición horizontal sin importar qué
-                          ícono (o texto corto tipo "NRC") tenga esa fila.
-                          items-start: los íconos se alinean con la
-                          PRIMERA línea de texto, no centrados verticalmente
-                          contra bloques de texto de varias líneas. */}
-                      <div className="grid grid-cols-[20px_1fr] gap-x-1.5 gap-y-1 items-start">
-                        <span className="flex justify-center pt-0.5">
-                          {enConflicto && <AlertTriangle className="size-3 shrink-0" />}
-                        </span>
-                        <span className="font-mono font-semibold">
-                          {codigoVisible(b.codigoCurso)}
-                        </span>
+                      key={h}
+                      className="absolute inset-x-0 border-t border-border/50"
+                      style={{ top: (h - HORA_INICIO) * PX_POR_HORA }}
+                    />
+                  ))}
 
-                        <BookOpen className="size-3 shrink-0 justify-self-center mt-0.5" />
-                        <span className="font-medium line-clamp-2">{b.tituloCurso}</span>
+                  {items.map((b) => {
+                    const area = resolverArea(b.codigoCurso)
+                    const chocaCon = conflictoPorNrc.get(b.nrc) ?? []
+                    const enConflicto = chocaCon.length > 0
+                    const ancho = 100 / maxCarriles
+                    const izquierda = b.lane * ancho
+                    // Alto mínimo para que TODA la información entre sin
+                    // cortarse: código, título (hasta 2 líneas), profesor
+                    // (hasta 2 líneas también -- se envuelve en vez de
+                    // truncar), NRC y horario -- hasta 7 líneas ~13px c/u +
+                    // padding, 8 si además hay que sumar "vs OTRO".
+                    // Legibilidad antes que compacidad -- el bloque crece
+                    // más allá de su franja horaria real si hace falta.
+                    const altoMinimo = enConflicto ? 124 : 110
 
-                        <GraduationCap className="size-3 shrink-0 justify-self-center mt-0.5" />
-                        {/* Sin line-clamp: algunos nombres de profesor
-                            necesitan 3 líneas o más -- se prioriza mostrar
-                            el nombre completo (el bloque ya puede crecer
-                            más allá de altoMinimo si hace falta). */}
-                        <span className="opacity-90">
-                          {b.profesor || "Profesor por asignar"}
-                        </span>
+                    const bloqueEl = (
+                      <div
+                        className={`absolute rounded-md border px-1.5 py-1.5 text-[11px] leading-tight ${
+                          enConflicto
+                            ? "border-warning bg-warning-bg text-warning"
+                            : `border-current ${area.badgeClassName}`
+                        }`}
+                        style={{
+                          top: b.top,
+                          // minHeight, no height fijo: si el profesor
+                          // necesita más líneas de las estimadas, la caja
+                          // debe crecer con el contenido real, no recortarlo
+                          // ni dejarlo desbordar por encima del borde.
+                          minHeight: Math.max(b.height, altoMinimo),
+                          left: `${izquierda}%`,
+                          width: `calc(${ancho}% - 4px)`,
+                          zIndex: enConflicto ? 1 : undefined,
+                        }}
+                      >
+                        {/* Grilla de 2 columnas (ícono, texto) para las 5
+                            filas -- la columna de ícono tiene ancho FIJO
+                            (20px, el mínimo que entra "NRC" sin partirse),
+                            así el texto de cada fila arranca exactamente en
+                            la misma posición horizontal sin importar qué
+                            ícono (o texto corto tipo "NRC") tenga esa fila.
+                            items-start: los íconos se alinean con la
+                            PRIMERA línea de texto, no centrados verticalmente
+                            contra bloques de texto de varias líneas. */}
+                        <div className="grid grid-cols-[20px_1fr] gap-x-1.5 gap-y-1 items-start">
+                          <span className="flex justify-center pt-0.5">
+                            {enConflicto && <AlertTriangle className="size-3 shrink-0" />}
+                          </span>
+                          <span className="font-mono font-semibold">
+                            {codigoVisible(b.codigoCurso)}
+                          </span>
 
-                        <span className="justify-self-center text-[10px] font-semibold pt-0.5">
-                          NRC
-                        </span>
-                        <span className="truncate opacity-90">{b.nrc}</span>
+                          <BookOpen className="size-3 shrink-0 justify-self-center mt-0.5" />
+                          <span className="font-medium line-clamp-2">{b.tituloCurso}</span>
 
-                        <CalendarClock className="size-3 shrink-0 justify-self-center mt-0.5" />
-                        <span className="truncate opacity-80">
-                          {b.horaInicio}–{b.horaFin}
-                        </span>
+                          <GraduationCap className="size-3 shrink-0 justify-self-center mt-0.5" />
+                          {/* Sin line-clamp: algunos nombres de profesor
+                              necesitan 3 líneas o más -- se prioriza mostrar
+                              el nombre completo (el bloque ya puede crecer
+                              más allá de altoMinimo si hace falta). */}
+                          <span className="opacity-90">
+                            {b.profesor || "Profesor por asignar"}
+                          </span>
 
-                        {enConflicto && (
-                          <>
-                            <AlertTriangle className="size-3 shrink-0 justify-self-center mt-0.5" />
-                            <span className="font-semibold">
-                              vs {chocaCon.map((c) => codigoVisible(c.conCurso)).join(", ")}
-                            </span>
-                          </>
-                        )}
+                          <span className="justify-self-center text-[10px] font-semibold pt-0.5">
+                            NRC
+                          </span>
+                          <span className="truncate opacity-90">{b.nrc}</span>
+
+                          <CalendarClock className="size-3 shrink-0 justify-self-center mt-0.5" />
+                          <span className="truncate opacity-80">
+                            {b.horaInicio}–{b.horaFin}
+                          </span>
+
+                          {enConflicto && (
+                            <>
+                              <AlertTriangle className="size-3 shrink-0 justify-self-center mt-0.5" />
+                              <span className="font-semibold">
+                                vs {chocaCon.map((c) => codigoVisible(c.conCurso)).join(", ")}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )
+                    )
 
-                  return <div key={b.key}>{bloqueEl}</div>
-                })}
-              </div>
-            )
-          })}
+                    return <div key={b.key}>{bloqueEl}</div>
+                  })}
+                </div>
+              )
+            })}
+          </div>
         </div>
-      </div>
 
-      {/* Sombras de scroll: pointer-events-none, solo indican que hay más
-          contenido a los costados -- nunca bloquean el click sobre los
-          bloques de curso que puedan quedar debajo. */}
-      {canScrollLeft && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 w-6 bg-gradient-to-r from-black/10 to-transparent dark:from-black/40"
-          style={{ left: 52 }}
-        />
-      )}
-      {canScrollRight && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-black/10 to-transparent dark:from-black/40"
-        />
-      )}
+        {/* Sombras de scroll: pointer-events-none, solo indican que hay más
+            contenido a los costados -- nunca bloquean el click sobre los
+            bloques de curso que puedan quedar debajo. */}
+        {canScrollLeft && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 w-6 bg-gradient-to-r from-black/10 to-transparent dark:from-black/40"
+            style={{ left: 52 }}
+          />
+        )}
+        {canScrollRight && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-black/10 to-transparent dark:from-black/40"
+          />
+        )}
+      </div>
     </div>
   )
 }

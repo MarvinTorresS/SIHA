@@ -119,6 +119,12 @@ function CursoMatriculadoCard({
                 <span className="truncate">{curso.seccion.profesor}</span>
               </div>
             )}
+            {curso.seccion.horarios.length === 0 && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="size-3.5 shrink-0" />
+                <span>Horario aún no publicado</span>
+              </div>
+            )}
             {curso.seccion.horarios.map((h, i) => (
               <div key={i} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Clock className="size-3.5 shrink-0" />

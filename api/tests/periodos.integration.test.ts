@@ -237,6 +237,30 @@ describe("Soporte multi-período", () => {
       expect(fuera.body.missingNrcs).toEqual(["99003"]);
     });
 
+    it("una sección sin horario publicado no rompe la validación de conflictos", async () => {
+      // Típico de ciclos futuros (202710/202720): Banner publica la sección
+      // antes que sus bloques.
+      await prisma.seccion.create({
+        data: {
+          nrc: "99004",
+          id_periodo: idP2,
+          id_curso: cursoA.id_curso,
+          codigo_curso_banner: cursoA.codigo,
+          numero_seccion: "02",
+          metadata: { banner_program: "isi" },
+        },
+      });
+      const res = await request(app)
+        .post(`/api/horarios/validar?periodo=${P2}`)
+        .send({ nrcs: ["99004", "99001"] });
+      expect(res.status).toBe(200);
+      expect(res.body.tieneConflictos).toBe(false);
+
+      const nrc = await request(app).get(`/api/horarios/nrc/99004?periodo=${P2}`);
+      expect(nrc.status).toBe(200);
+      expect(nrc.body.horarios).toEqual([]);
+    });
+
     it("la matrícula guarda la sección y el período pedidos", async () => {
       await setHistorial(cursoA, "ninguno", null);
       await setHistorial(cursoP, "ninguno", null);

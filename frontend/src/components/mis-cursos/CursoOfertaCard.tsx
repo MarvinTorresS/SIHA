@@ -34,7 +34,8 @@ function toSeccion(curso: CursoOferta, s: SeccionOferta): Seccion {
 }
 
 function resumenHorario(horarios: SeccionOferta["horarios"]): string {
-  if (horarios.length === 0) return "Sin horario asignado"
+  // Típico de ciclos futuros: Banner publica la sección antes que su horario.
+  if (horarios.length === 0) return "Horario aún no publicado"
   return horarios
     .map((h) => `${h.dia.slice(0, 3)} ${h.horaInicio}-${h.horaFin}`)
     .join(" · ")

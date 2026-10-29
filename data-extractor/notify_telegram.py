@@ -128,7 +128,7 @@ def _unexpected_warnings(summary: dict) -> int:
 
 def _counts_line(summary: dict) -> str | None:
     """Línea ⚠: solo advertencias inesperadas y errores. Las esperadas
-    ("sin horarios en Banner") no avisan: ya están en "(0 con horario)"."""
+    (datos de Banner: sin horarios o sin fechas) no avisan."""
     parts = []
     if _unexpected_warnings(summary):
         parts.append(_plural(_unexpected_warnings(summary), "advertencia", "advertencias"))
@@ -330,7 +330,7 @@ def _warnings_detail(summary: dict | None) -> str:
         return ""
     return (
         f"Advertencias: {_unexpected_warnings(summary)} inesperadas, "
-        f"{summary.get('warnings_expected', 0)} esperadas (sin horarios en Banner) · "
+        f"{summary.get('warnings_expected', 0)} esperadas (sin horarios o sin fechas en Banner) · "
         f"errores: {summary.get('errors', 0)}\n\n"
     )
 

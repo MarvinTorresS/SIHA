@@ -692,7 +692,12 @@ def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, d
                 stats.dates_valid += 1
             elif dates.missing:
                 stats.dates_missing += 1
-                log.warning(f"  ⚠ NRC {sec['crn']}: Banner no trae fechas, se conservan las existentes")
+                # Esperada: es un dato de Banner, no un fallo del ETL. El caso
+                # sistémico (el parser falla en muchas) lo cubre el umbral.
+                log.warning(
+                    f"  ⚠ NRC {sec['crn']}: Banner no trae fechas, se conservan las existentes",
+                    extra=EXPECTED_WARNING,
+                )
             else:
                 stats.dates_invalid += 1
                 log.warning(f"  ⚠ NRC {sec['crn']}: {dates.problem}, se conservan las fechas existentes")

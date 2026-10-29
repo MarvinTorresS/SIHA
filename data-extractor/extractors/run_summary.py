@@ -166,10 +166,12 @@ def diff_term(before: Snapshot, after: Snapshot) -> TermDiff:
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Marca de un WARNING esperado, que no amerita aviso: log.warning(..., extra=EXPECTED_WARNING).
-# Hoy solo "sin horarios en Banner", el estado normal de un período cuyo
-# horario no se publicó (ya visible en el resumen como "(0 con horario)").
-# Todo WARNING sin la marca es inesperado (fecha inválida, umbral de fechas,
-# 0 secciones donde había datos, códigos fallidos, etc.).
+# Son datos de Banner, no fallos del ETL:
+# - "sin horarios en Banner": el estado normal de un período cuyo horario no
+#   se publicó (ya visible en el resumen como "(0 con horario)").
+# - "Banner no trae fechas" de una sección.
+# Todo WARNING sin la marca es inesperado (fecha inválida, umbral de fechas
+# inválidas, 0 secciones donde había datos, códigos fallidos, etc.).
 EXPECTED_WARNING = {"expected_warning": True}
 
 

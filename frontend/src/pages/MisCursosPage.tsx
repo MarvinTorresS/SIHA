@@ -362,7 +362,22 @@ export function MisCursosPage() {
               </div>
             )}
 
-            {data && cursosFiltrados.length === 0 && (
+            {/* Dos vacíos distintos: el ciclo no tiene oferta para la
+                carrera (ej. Topografía en 2027, Banner no publicó nada
+                todavía) vs. los filtros no dejan nada. */}
+            {data && data.length === 0 && (
+              <div className="py-8 text-center space-y-1">
+                <p className="text-sm font-medium">
+                  Todavía no hay oferta de {estudiante?.carrera.nombre} en {periodo?.nombre}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Banner no publicó secciones de tu carrera para este ciclo. Probá con otro
+                  ciclo o volvé más adelante.
+                </p>
+              </div>
+            )}
+
+            {data && data.length > 0 && cursosFiltrados.length === 0 && (
               <p className="text-sm text-muted-foreground py-8 text-center">
                 Ningún curso coincide con la búsqueda o los filtros.
               </p>

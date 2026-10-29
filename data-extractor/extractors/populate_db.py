@@ -38,7 +38,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 from collections import defaultdict
 
 import psycopg2
@@ -98,17 +98,25 @@ def _parse_credits(value) -> float:
     return float(value)
 
 
-def _parse_date(value: str) -> date | None:
-    """'14/11/2026' → date(2026,11,14). Retorna None si no es válida."""
+# Formato EXPLÍCITO que manda Banner en meetingTime.startDate/endDate:
+# MM/DD/YYYY (ej. "07/20/2026"). El parser anterior asumía DD/MM y fallaba
+# en silencio: todas las fecha_inicio/fecha_fin quedaban NULL.
+BANNER_DATE_FORMAT = "%m/%d/%Y"
+
+
+def _parse_banner_date(value: str | None, nrc: str, field_name: str) -> date | None:
+    """
+    '07/20/2026' -> date(2026, 7, 20). Si viene vacía o no parsea, WARNING
+    por sección y None -- nunca un NULL silencioso.
+    """
     if not value:
+        log.warning(f"  ⚠ NRC {nrc}: {field_name} vacía en Banner")
         return None
     try:
-        parts = value.split("/")
-        if len(parts) == 3:
-            return date(int(parts[2]), int(parts[1]), int(parts[0]))
-    except (ValueError, IndexError):
-        pass
-    return None
+        return datetime.strptime(value.strip(), BANNER_DATE_FORMAT).date()
+    except ValueError:
+        log.warning(f"  ⚠ NRC {nrc}: {field_name} '{value}' no tiene formato MM/DD/YYYY")
+        return None
 
 
 def _parse_time(value: str) -> str | None:
@@ -449,7 +457,17 @@ def _upsert_teacher(cur, sec: dict) -> int | None:
 def _upsert_section(cur, sec: dict, period_id: int) -> int:
     """
     Upsert de una sección por (nrc, id_periodo). En conflicto se refrescan
-    profesor, cupos y metadata.
+    los datos que Banner puede cambiar entre corridas: profesor, cupos,
+    metadata, fechas, título, número de sección, tipo y campus.
+
+    NO se actualizan a propósito:
+    - creditos: el MERGE (_merge_banner_syllabus) los reemplaza por los de
+      la malla al matchear la sección; pisarlos con Banner en cada corrida
+      revertiría esa corrección y el MERGE no la repite (id_curso ya no es
+      NULL).
+    - codigo_curso_banner / es_general: el NRC identifica la sección de un
+      curso; si Banner reasignara un NRC a otro curso, id_curso quedaría
+      apuntando al viejo -- mejor que no pase en silencio.
     """
     nrc = sec["crn"]
     cur.execute(
@@ -462,10 +480,16 @@ def _upsert_section(cur, sec: dict, period_id: int) -> int:
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'activa', %s, %s, %s, %s)
         ON CONFLICT (nrc, id_periodo) DO UPDATE SET
             id_profesor = EXCLUDED.id_profesor,
+            numero_seccion = EXCLUDED.numero_seccion,
+            titulo = EXCLUDED.titulo,
+            tipo = EXCLUDED.tipo,
+            campus = EXCLUDED.campus,
             capacidad = EXCLUDED.capacidad,
             inscritos = EXCLUDED.inscritos,
             disponibles = EXCLUDED.disponibles,
             estado_oferta = 'activa',
+            fecha_inicio = EXCLUDED.fecha_inicio,
+            fecha_fin = EXCLUDED.fecha_fin,
             metadata = EXCLUDED.metadata,
             actualizado_en = now()
         RETURNING id_seccion
@@ -478,8 +502,8 @@ def _upsert_section(cur, sec: dict, period_id: int) -> int:
             sec.get("capacity", 0), sec.get("enrolled", 0),
             sec.get("available", 0),
             sec.get("is_general", False),
-            _parse_date(sec.get("start_date")),
-            _parse_date(sec.get("end_date")),
+            _parse_banner_date(sec.get("start_date"), nrc, "fecha_inicio"),
+            _parse_banner_date(sec.get("end_date"), nrc, "fecha_fin"),
             json.dumps(sec.get("metadata") or {}),
         ),
     )

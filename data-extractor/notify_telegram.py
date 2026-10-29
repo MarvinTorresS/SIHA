@@ -121,10 +121,17 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
+def _unexpected_warnings(summary: dict) -> int:
+    # Resumen sin la separación (versión vieja): cuentan todas.
+    return summary.get("warnings_unexpected", summary.get("warnings", 0)) or 0
+
+
 def _counts_line(summary: dict) -> str | None:
+    """Línea ⚠: solo advertencias inesperadas y errores. Las esperadas
+    ("sin horarios en Banner") no avisan: ya están en "(0 con horario)"."""
     parts = []
-    if summary.get("warnings"):
-        parts.append(_plural(summary["warnings"], "advertencia", "advertencias"))
+    if _unexpected_warnings(summary):
+        parts.append(_plural(_unexpected_warnings(summary), "advertencia", "advertencias"))
     if summary.get("errors"):
         parts.append(_plural(summary["errors"], "error", "errores"))
     return "⚠ " + " · ".join(parts) if parts else None
@@ -318,13 +325,27 @@ def load_summary(path: Path) -> dict | None:
     return None
 
 
-def write_step_summary(text: str, note: str) -> None:
-    """Mismo resumen (sin truncar) en el resumen de la corrida de GitHub."""
+def _warnings_detail(summary: dict | None) -> str:
+    if summary is None:
+        return ""
+    return (
+        f"Advertencias: {_unexpected_warnings(summary)} inesperadas, "
+        f"{summary.get('warnings_expected', 0)} esperadas (sin horarios en Banner) · "
+        f"errores: {summary.get('errors', 0)}\n\n"
+    )
+
+
+def write_step_summary(text: str, note: str, summary: dict | None = None) -> None:
+    """Mismo resumen (sin truncar) en el resumen de la corrida de GitHub,
+    más el detalle de advertencias esperadas e inesperadas."""
     target = os.getenv("GITHUB_STEP_SUMMARY")
     if not target:
         return
     with open(target, "a", encoding="utf-8") as f:
-        f.write("### SIHA · ETL\n\n" + "  \n".join(text.splitlines()) + f"\n\n_Telegram: {note}_\n")
+        f.write(
+            "### SIHA · ETL\n\n" + "  \n".join(text.splitlines()) + "\n\n"
+            + _warnings_detail(summary) + f"_Telegram: {note}_\n"
+        )
 
 
 def main(argv: list[str] | None = None, now: datetime | None = None) -> int:
@@ -362,24 +383,24 @@ def _run(args, token: str, chat_id: str, now: datetime | None) -> int:
     text = format_message(summary, kind, args.run_url, max_lines=None)
 
     if kind is None:
-        write_step_summary(text, "no se envía (sin cambios y no es lunes)")
+        write_step_summary(text, "no se envía (sin cambios y no es lunes)", summary)
         log.info("Sin cambios y no es lunes: no se envía nada")
         return 0
     if not (token and chat_id):
-        write_step_summary(text, "no enviado (faltan los secrets)")
+        write_step_summary(text, "no enviado (faltan los secrets)", summary)
         log.warning("Faltan TELEGRAM_BOT_TOKEN y/o TELEGRAM_CHAT_ID: no se envía el aviso")
         return 0
 
     try:
         send(token, chat_id, format_message(summary, kind, args.run_url))
     except TelegramSendError as e:
-        write_step_summary(text, f"falló el envío ({e})")
+        write_step_summary(text, f"falló el envío ({e})", summary)
         if summary is not None and summary.get("status") == "ok":
             log.error(f"El ETL terminó bien; solo falló el aviso a Telegram ({e})")
         else:
             log.error(f"No se pudo enviar el aviso a Telegram ({e}); además el ETL falló, revisá la corrida")
         return 1
-    write_step_summary(text, "enviado")
+    write_step_summary(text, "enviado", summary)
     log.info(f"Aviso enviado ({kind})")
     return 0
 

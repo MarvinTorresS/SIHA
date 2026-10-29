@@ -165,19 +165,34 @@ def diff_term(before: Snapshot, after: Snapshot) -> TermDiff:
 # Conteo de WARNING / ERROR
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Marca de un WARNING esperado, que no amerita aviso: log.warning(..., extra=EXPECTED_WARNING).
+# Hoy solo "sin horarios en Banner", el estado normal de un período cuyo
+# horario no se publicó (ya visible en el resumen como "(0 con horario)").
+# Todo WARNING sin la marca es inesperado (fecha inválida, umbral de fechas,
+# 0 secciones donde había datos, códigos fallidos, etc.).
+EXPECTED_WARNING = {"expected_warning": True}
+
+
 class LogCounter(logging.Handler):
-    """Cuenta los WARNING y los ERROR (o más graves) que se loguean."""
+    """Cuenta los WARNING (esperados e inesperados) y los ERROR o más graves."""
 
     def __init__(self):
         super().__init__(level=logging.WARNING)
-        self.warnings = 0
+        self.warnings_expected = 0
+        self.warnings_unexpected = 0
         self.errors = 0
+
+    @property
+    def warnings(self) -> int:
+        return self.warnings_expected + self.warnings_unexpected
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.levelno >= logging.ERROR:
             self.errors += 1
+        elif getattr(record, "expected_warning", False):
+            self.warnings_expected += 1
         else:
-            self.warnings += 1
+            self.warnings_unexpected += 1
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -248,6 +263,8 @@ class RunSummary:
             "fatal_reason": self.fatal_reason,
             "has_changes": has_changes,
             "warnings": counter.warnings if counter else 0,
+            "warnings_expected": counter.warnings_expected if counter else 0,
+            "warnings_unexpected": counter.warnings_unexpected if counter else 0,
             "errors": counter.errors if counter else 0,
             "new_terms": new_terms,
             "failed_terms": self.failed_terms,

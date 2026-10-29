@@ -54,6 +54,7 @@ from config import (
 from extractors.terms import (
     PeriodState, TermStatus, decide_active, describe_term,
 )
+from extractors.run_summary import EXPECTED_WARNING
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -619,7 +620,12 @@ def _replace_schedule(cur, section_id: int, sec: dict) -> None:
         blocks.append((section_id, key[0], start_time, end_time, h.get("classroom", "")))
 
     if not blocks:
-        log.warning(f"  ⚠ NRC {sec['crn']}: sin horarios en Banner, se conservan los bloques existentes")
+        # Esperada: es lo normal en un período cuyo horario no se publicó
+        # aún; el resumen ya lo muestra como "(0 con horario)".
+        log.warning(
+            f"  ⚠ NRC {sec['crn']}: sin horarios en Banner, se conservan los bloques existentes",
+            extra=EXPECTED_WARNING,
+        )
         return
 
     cur.execute("DELETE FROM horario_bloque WHERE id_seccion = %s", (section_id,))

@@ -4,7 +4,7 @@ import { CalendarClock, ClipboardList } from "lucide-react"
 import { Header } from "@/components/layout/Header"
 import { CalendarioSemanalGrid } from "@/components/shared/CalendarioSemanalGrid"
 import { PeriodoSelect } from "@/components/shared/PeriodoSelect"
-import { usePeriodoSeleccionado } from "@/hooks/usePeriodoSeleccionado"
+import { usePeriodoHorario } from "@/hooks/usePeriodoSeleccionado"
 import { useAuthStore } from "@/store/authStore"
 import { miHorarioService } from "@/services/mi-horario.service"
 import { ApiError } from "@/services/api"
@@ -17,7 +17,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
  * Mi Horario -- pantalla independiente, accesible en cualquier momento:
  * lee las secciones "cursando" del ciclo seleccionado directo de
  * historial_curso (no depende de pasar por Mis Cursos ni de la oferta).
- * El ciclo es el mismo que el de Mis Cursos (usePeriodoStore). Layout de un
+ * El ciclo es el mismo que el de Mis Cursos (usePeriodoStore), pero acá
+ * también se ofrecen los ciclos finalizados donde el estudiante todavía
+ * tiene cursos "cursando", en solo lectura (esta pantalla no tiene
+ * acciones: ni quitar, ni agregar, ni validar conflictos). Layout de un
  * solo panel: solo el calendario, a diferencia de Mis Cursos que además
  * tiene la lista de cursos al lado -- acá no hay nada que elegir, solo
  * consultar lo ya confirmado.
@@ -26,10 +29,12 @@ export function HorarioPage() {
   const estudiante = useAuthStore((s) => s.estudiante)
 
   const {
+    periodos,
     periodo,
+    setPeriodo,
     isLoading: isLoadingPeriodos,
     error: errorPeriodos,
-  } = usePeriodoSeleccionado()
+  } = usePeriodoHorario(estudiante?.carnet)
 
   const { data, isLoading, error: errorSecciones } = useQuery({
     queryKey: ["secciones-cursando", estudiante?.carnet, periodo?.codigo],
@@ -49,7 +54,13 @@ export function HorarioPage() {
         description={estudiante?.carrera.nombre}
       />
       <main className="flex-1 p-4 md:p-6 space-y-4">
-        <PeriodoSelect className="sm:max-w-xs" />
+        <PeriodoSelect
+          periodos={periodos}
+          periodo={periodo}
+          onChange={setPeriodo}
+          isLoading={isLoadingPeriodos}
+          className="sm:max-w-xs"
+        />
 
         {error && (
           <Alert variant="destructive">
@@ -98,6 +109,7 @@ export function HorarioPage() {
           <>
             <p className="text-sm text-muted-foreground">
               {data.length} {data.length === 1 ? "curso" : "cursos"} · {creditosTotales} créditos
+              {periodo?.finalizado && " · Ciclo finalizado, solo lectura"}
             </p>
             <CalendarioSemanalGrid secciones={data} />
           </>

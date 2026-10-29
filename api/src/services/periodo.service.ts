@@ -63,6 +63,63 @@ export async function resolvePeriod(codigo?: string): Promise<periodo> {
   return encontrado;
 }
 
+/** Período del horario de un estudiante: activo o finalizado con matrícula. */
+export interface PeriodoHorario extends PeriodoResumen {
+  /** true si el período ya no está activo: solo lectura en Mi Horario. */
+  finalizado: boolean;
+}
+
+/**
+ * Períodos que Mi Horario le muestra a un estudiante: los activos (igual
+ * que listActivePeriods) más los INACTIVOS donde todavía tiene cursos
+ * 'cursando' -- un ciclo que terminó no debe esconder el horario del que
+ * el estudiante aún no marcó resultados. Mis Cursos sigue usando solo los
+ * activos (listActivePeriods).
+ */
+export async function listSchedulePeriods(idEstudiante: number): Promise<PeriodoHorario[]> {
+  const activos = await listActivePeriods();
+  const finalizados = await prisma.periodo.findMany({
+    where: {
+      activo: false,
+      historial_curso: { some: { id_estudiante: idEstudiante, estado: "cursando" } },
+    },
+  });
+  return [
+    ...activos.map((p) => ({ ...p, finalizado: false })),
+    ...finalizados.map((p) => ({
+      codigo: p.codigo,
+      nombre: p.nombre,
+      esPredeterminado: false,
+      finalizado: true,
+    })),
+  ].sort((a, b) => Number(a.codigo) - Number(b.codigo));
+}
+
+/**
+ * Hermana de resolvePeriod para Mi Horario: mismas reglas, y además acepta
+ * un período INACTIVO solo si el estudiante tiene 'cursando' en él. Si no,
+ * PeriodoInvalidoError (400), igual que resolvePeriod.
+ */
+export async function resolveSchedulePeriod(
+  codigo: string | undefined,
+  idEstudiante: number
+): Promise<periodo> {
+  try {
+    return await resolvePeriod(codigo);
+  } catch (err) {
+    if (!(err instanceof PeriodoInvalidoError) || codigo === undefined) throw err;
+    const finalizado = await prisma.periodo.findFirst({
+      where: {
+        codigo,
+        activo: false,
+        historial_curso: { some: { id_estudiante: idEstudiante, estado: "cursando" } },
+      },
+    });
+    if (!finalizado) throw err;
+    return finalizado;
+  }
+}
+
 /**
  * Lee el query param ?periodo de un request de Express. Ausente o vacío
  * equivale a "usar el predeterminado"; repetido (?periodo=a&periodo=b)

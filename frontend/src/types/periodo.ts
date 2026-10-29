@@ -6,6 +6,12 @@ export interface Periodo {
   esPredeterminado: boolean
 }
 
+/** Elemento de GET /api/estudiantes/{carnet}/periodos-horario (Mi Horario). */
+export interface PeriodoHorario extends Periodo {
+  /** Ciclo ya inactivo donde el estudiante tiene cursos "cursando": solo lectura. */
+  finalizado: boolean
+}
+
 /** Período resumido que la API incluye dentro de otras respuestas. */
 export interface PeriodoRef {
   codigo: string

@@ -47,6 +47,7 @@ describe("Soporte multi-período", () => {
   let cursoP: { id_curso: number; codigo: string };
   let idP1: number;
   let idP2: number;
+  let idPInactivo: number;
 
   async function crearSeccion(
     nrc: string,
@@ -135,9 +136,9 @@ describe("Soporte multi-período", () => {
     idP2 = (await prisma.periodo.create({
       data: { codigo: P2, nombre: "TEST Ciclo II 2099", anio: 2099, ciclo: 2, activo: true },
     })).id_periodo;
-    await prisma.periodo.create({
+    idPInactivo = (await prisma.periodo.create({
       data: { codigo: P_INACTIVO, nombre: "TEST Inactivo 2099", anio: 2099, ciclo: 3, activo: false },
-    });
+    })).id_periodo;
 
     // Mismo NRC 99001 en ambos períodos, con cursos distintos.
     await crearSeccion("99001", idP1, cursoA, "Lunes");
@@ -376,6 +377,81 @@ describe("Soporte multi-período", () => {
         where: { id_estudiante_id_curso: { id_estudiante: idEstudiante, id_curso: cursoP.id_curso } },
       });
       expect(fila.estado).toBe("aprobado");
+    });
+  });
+
+  describe("Mi Horario con un ciclo finalizado (inactivo)", () => {
+    async function periodosHorario() {
+      const res = await request(app)
+        .get(`/api/estudiantes/${CARNET}/periodos-horario`)
+        .set("Authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      return res.body as { codigo: string; esPredeterminado: boolean; finalizado: boolean }[];
+    }
+
+    async function cursandoEnInactivo() {
+      await setHistorial(cursoA, "ninguno", null);
+      const seccion = await prisma.seccion.create({
+        data: {
+          nrc: "99005",
+          id_periodo: idPInactivo,
+          id_curso: cursoA.id_curso,
+          codigo_curso_banner: cursoA.codigo,
+          numero_seccion: "01",
+          metadata: { banner_program: "isi" },
+        },
+      });
+      await prisma.historial_curso.create({
+        data: {
+          id_estudiante: idEstudiante,
+          id_curso: cursoA.id_curso,
+          estado: "cursando",
+          id_periodo: idPInactivo,
+          id_seccion: seccion.id_seccion,
+        },
+      });
+    }
+
+    async function limpiarInactivo() {
+      await setHistorial(cursoA, "ninguno", null);
+      await prisma.seccion.deleteMany({ where: { id_periodo: idPInactivo } });
+    }
+
+    it("con 'cursando' en el ciclo inactivo, Mi Horario lo ofrece como finalizado y muestra su horario", async () => {
+      await cursandoEnInactivo();
+      try {
+        const periodos = await periodosHorario();
+        const inactivo = periodos.find((p) => p.codigo === P_INACTIVO);
+        expect(inactivo).toEqual(expect.objectContaining({ finalizado: true, esPredeterminado: false }));
+        expect(periodos.filter((p) => p.esPredeterminado)).toHaveLength(1);
+        expect(periodos.filter((p) => p.finalizado).map((p) => p.codigo)).toEqual([P_INACTIVO]);
+
+        const horario = await request(app)
+          .get(`/api/estudiantes/${CARNET}/secciones-cursando?periodo=${P_INACTIVO}`)
+          .set("Authorization", `Bearer ${token}`);
+        expect(horario.status).toBe(200);
+        expect(horario.body.map((s: { nrc: string }) => s.nrc)).toEqual(["99005"]);
+
+        // Mis Cursos no cambia: la oferta de un ciclo inactivo sigue siendo 400.
+        const oferta = await request(app)
+          .get(`/api/estudiantes/${CARNET}/oferta?periodo=${P_INACTIVO}`)
+          .set("Authorization", `Bearer ${token}`);
+        expect(oferta.status).toBe(400);
+        const publicos = await request(app).get("/api/periodos");
+        expect(publicos.body.map((p: { codigo: string }) => p.codigo)).not.toContain(P_INACTIVO);
+      } finally {
+        await limpiarInactivo();
+      }
+    });
+
+    it("sin 'cursando' en el ciclo inactivo, no aparece y secciones-cursando responde 400", async () => {
+      await limpiarInactivo();
+      expect((await periodosHorario()).map((p) => p.codigo)).not.toContain(P_INACTIVO);
+
+      const horario = await request(app)
+        .get(`/api/estudiantes/${CARNET}/secciones-cursando?periodo=${P_INACTIVO}`)
+        .set("Authorization", `Bearer ${token}`);
+      expect(horario.status).toBe(400);
     });
   });
 });

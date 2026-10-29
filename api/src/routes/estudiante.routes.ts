@@ -6,6 +6,7 @@ import {
   marcarCursoAprobado,
   desmarcarCurso,
   getSeccionesCursando,
+  getPeriodosHorario,
   obtenerOpcionesParaSlot,
   asignarCursoRealASlot,
   desasignarSlotMalla,
@@ -103,7 +104,8 @@ estudianteRouter.get(
  *
  * Secciones confirmadas ("cursando") del estudiante, para la pantalla Mi
  * Horario -- lee directo de historial_curso, independiente de la oferta
- * de un período (a diferencia de /oferta). Query opcional: ?periodo=<codigo>. Ver getSeccionesCursando
+ * de un período (a diferencia de /oferta). Query opcional: ?periodo=<codigo>;
+ * acepta un período finalizado solo si el estudiante tiene 'cursando' en él. Ver getSeccionesCursando
  * en estudiante.service.ts.
  */
 estudianteRouter.get(
@@ -122,6 +124,31 @@ estudianteRouter.get(
       }
       if (respondPeriodError(err, res)) return;
       console.error("Error en GET /estudiantes/:carnet/secciones-cursando", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
+ * GET /api/estudiantes/:carnet/periodos-horario
+ *
+ * Períodos del selector de Mi Horario: los activos más los finalizados
+ * donde el estudiante todavía tiene cursos 'cursando' (finalizado=true,
+ * solo lectura). Mis Cursos usa GET /api/periodos (solo activos).
+ */
+estudianteRouter.get(
+  "/estudiantes/:carnet/periodos-horario",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+    try {
+      return res.json(await getPeriodosHorario(carnet));
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      console.error("Error en GET /estudiantes/:carnet/periodos-horario", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }
   }

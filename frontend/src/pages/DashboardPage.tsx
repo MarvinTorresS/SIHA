@@ -9,9 +9,12 @@ import {
   BookOpen,
   User,
   MapPin,
+  CalendarCheck,
 } from "lucide-react"
 import { resolverArea, codigoVisible } from "@/lib/curso-area"
 import { nombrePeriodoSiDistinto } from "@/lib/periodo"
+import { usePeriodoSeleccionado } from "@/hooks/usePeriodoSeleccionado"
+import type { PeriodoRef } from "@/types/periodo"
 import { Header } from "@/components/layout/Header"
 import { EstadoBadge } from "@/components/shared/EstadoBadge"
 import { useAuthStore } from "@/store/authStore"
@@ -188,6 +191,24 @@ export function DashboardPage() {
   const otroPeriodoDe = (c: CursoConProgreso) =>
     nombrePeriodoSiDistinto(c.periodoCursando, codigoPredeterminado)
   const cursosCicloActual = cursosMatriculados.filter((c) => otroPeriodoDe(c) === null)
+  // Ciclos ya inactivos (terminados o cerrados) donde quedan cursos
+  // "cursando": el estudiante tiene que marcar en la Malla cuáles aprobó.
+  // El aviso desaparece solo cuando no queda ninguno.
+  const { periodos: periodosActivos } = usePeriodoSeleccionado()
+  const codigosActivos = new Set(periodosActivos.map((p) => p.codigo))
+  const ciclosTerminados = Array.from(
+    new Map(
+      todosLosCursos
+        .filter(
+          (c) =>
+            c.estado === "cursando" &&
+            c.periodoCursando !== null &&
+            periodosActivos.length > 0 &&
+            !codigosActivos.has(c.periodoCursando.codigo)
+        )
+        .map((c) => [c.periodoCursando!.codigo, c.periodoCursando!] as [string, PeriodoRef])
+    ).values()
+  )
   const creditosCicloActual = cursosCicloActual.reduce(
     (sum, c) => sum + Number(c.creditos),
     0
@@ -252,6 +273,25 @@ export function DashboardPage() {
 
         {progreso && (
           <>
+            {/* Neutro a propósito (Alert default, sin rojo UNA ni ámbar):
+                no es un error, es un recordatorio de algo pendiente. */}
+            {ciclosTerminados.map((ciclo) => (
+              <Alert key={ciclo.codigo}>
+                <CalendarCheck className="size-4" />
+                <AlertDescription className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <span>
+                    Tu {ciclo.nombre} terminó: marcá en la Malla los cursos que aprobaste.
+                  </span>
+                  <Link
+                    to="/malla"
+                    className="flex items-center gap-1 font-medium text-foreground underline underline-offset-2"
+                  >
+                    Ir a la Malla <ChevronRight className="size-4" />
+                  </Link>
+                </AlertDescription>
+              </Alert>
+            ))}
+
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard
                 icon={TrendingUp}

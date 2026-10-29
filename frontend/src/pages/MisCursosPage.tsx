@@ -56,7 +56,9 @@ export function MisCursosPage() {
   const limpiarSeccionesManuales = useHorarioStore((s) => s.limpiarSeccionesManuales)
 
   const {
+    periodos,
     periodo,
+    setPeriodo,
     isLoading: isLoadingPeriodos,
     error: errorPeriodos,
   } = usePeriodoSeleccionado()
@@ -266,7 +268,13 @@ export function MisCursosPage() {
         {/* Selector de ciclo arriba de todo: decide qué oferta, secciones y
             calendario se ven, en ambos paneles (por eso no vive dentro de
             la tab "Cursos"). En xl se alinea con el panel de la lista. */}
-        <PeriodoSelect className="mb-4 xl:max-w-[560px]" />
+        <PeriodoSelect
+          periodos={periodos}
+          periodo={periodo}
+          onChange={setPeriodo}
+          isLoading={isLoadingPeriodos}
+          className="mb-4 xl:max-w-[560px]"
+        />
 
         {/* <xl: "Cursos" y "Horario" son tabs (una a la vez, el layout de
             2 paneles simultáneos no entra cómodo por debajo de esto).

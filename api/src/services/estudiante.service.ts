@@ -7,7 +7,13 @@ import {
   type MissingPrerequisite,
   type PeriodRef,
 } from "./elegibilidad.service";
-import { resolvePeriod, toPeriodRef } from "./periodo.service";
+import {
+  listSchedulePeriods,
+  resolvePeriod,
+  resolveSchedulePeriod,
+  toPeriodRef,
+  type PeriodoHorario,
+} from "./periodo.service";
 
 const prisma = new PrismaClient();
 
@@ -1474,7 +1480,9 @@ export async function getSeccionesCursando(
   if (!estudiante) {
     throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
   }
-  const periodo = await resolvePeriod(codigoPeriodo);
+  // Acepta también un período finalizado si el estudiante tiene 'cursando'
+  // en él (solo lectura en Mi Horario), ver resolveSchedulePeriod.
+  const periodo = await resolveSchedulePeriod(codigoPeriodo, estudiante.id_estudiante);
 
   // Solo las matrículas de ESTE período: Mi Horario muestra el calendario
   // de un ciclo a la vez. confirmarMatricula siempre guarda id_periodo, y
@@ -1517,4 +1525,16 @@ export async function getSeccionesCursando(
         })),
       };
     });
+}
+
+/**
+ * Períodos que Mi Horario ofrece en su selector: activos más los
+ * finalizados donde el estudiante todavía tiene cursos 'cursando'.
+ */
+export async function getPeriodosHorario(carnet: string): Promise<PeriodoHorario[]> {
+  const estudiante = await prisma.estudiante.findUnique({ where: { carnet } });
+  if (!estudiante) {
+    throw new EstudianteNoEncontradoError(`No existe un estudiante con carnet ${carnet}`);
+  }
+  return listSchedulePeriods(estudiante.id_estudiante);
 }

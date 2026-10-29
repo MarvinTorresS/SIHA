@@ -76,6 +76,7 @@ def run(today: date) -> int:
     conn = populate_db._connect()
     conn.autocommit = False
     failed_terms: list[str] = []
+    untrusted_dates: set[str] = set()
     try:
         career_map = populate_db.load_catalog_and_syllabus(conn)
         conn.commit()
@@ -94,6 +95,8 @@ def run(today: date) -> int:
                 extraction = banner_connector.extract_term(term)
                 stats = populate_db.load_term(conn, term, extraction, career_map)
                 conn.commit()
+                if stats.dates_blocked:
+                    untrusted_dates.add(term)
                 log.info(f"  ✓ {term}: {stats.total} secciones cargadas y confirmadas")
             except Exception:
                 conn.rollback()
@@ -101,7 +104,7 @@ def run(today: date) -> int:
                 failed_terms.append(term)
 
         log.info("▶ Paso 4: regla de periodo.activo")
-        populate_db.apply_active_rule(conn, statuses, today)
+        populate_db.apply_active_rule(conn, statuses, today, untrusted_dates)
         conn.commit()
 
         populate_db.quality_report(conn)

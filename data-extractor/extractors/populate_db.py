@@ -129,22 +129,69 @@ def _parse_credits(value) -> float:
 # Formato EXPLÍCITO que manda Banner en meetingTime.startDate/endDate:
 # MM/DD/YYYY (ej. "07/20/2026"). El parser anterior asumía DD/MM y fallaba
 # en silencio: todas las fecha_inicio/fecha_fin quedaban NULL.
+#
+# El formato depende del locale de la sesión de Banner: si algún día
+# devolviera DD/MM, "20/07/2026" falla el parseo, pero una fecha ambigua
+# ("08/03/2027") parsearía con el mes y el día cruzados. Por eso cada
+# sección se valida (ver _validate_section_dates) y, si falla más del
+# DATE_INVALID_THRESHOLD de las secciones de un período, ese período no
+# actualiza fechas ni puede desactivarse por fecha en esta corrida.
 BANNER_DATE_FORMAT = "%m/%d/%Y"
+DATE_INVALID_THRESHOLD = 0.05
 
 
-def _parse_banner_date(value: str | None, nrc: str, field_name: str) -> date | None:
-    """
-    '07/20/2026' -> date(2026, 7, 20). Si viene vacía o no parsea, WARNING
-    por sección y None -- nunca un NULL silencioso.
-    """
-    if not value:
-        log.warning(f"  ⚠ NRC {nrc}: {field_name} vacía en Banner")
+def _parse_banner_date(value: str | None) -> date | None:
+    """'07/20/2026' -> date(2026, 7, 20); vacía o con otro formato -> None."""
+    if not value or not value.strip():
         return None
     try:
         return datetime.strptime(value.strip(), BANNER_DATE_FORMAT).date()
     except ValueError:
-        log.warning(f"  ⚠ NRC {nrc}: {field_name} '{value}' no tiene formato MM/DD/YYYY")
         return None
+
+
+@dataclass
+class SectionDates:
+    start: date | None
+    end: date | None
+    problem: str | None  # None = válidas; "faltan" = Banner no trae fechas
+
+    @property
+    def valid(self) -> bool:
+        return self.problem is None
+
+    @property
+    def missing(self) -> bool:
+        return self.problem == "faltan"
+
+
+def _validate_section_dates(sec: dict, term: str) -> SectionDates:
+    """
+    Fechas de una sección validadas contra su período:
+    - ambas presentes y con formato MM/DD/YYYY;
+    - inicio < fin;
+    - año coherente: Ciclo I/II dentro del año del período; el verano
+      (sufijo 95) puede caer en ese año o el siguiente (202695 corre en
+      ene-feb 2027).
+    Con una fecha ambigua en DD/MM (ej. "08/03/2027" = 8 de marzo) el
+    cruce de mes y día casi siempre rompe inicio < fin o el año; lo que no
+    se puede detectar por sección lo atrapa el umbral por período.
+    """
+    raw_start, raw_end = sec.get("start_date"), sec.get("end_date")
+    if not raw_start and not raw_end:
+        return SectionDates(None, None, "faltan")
+
+    start, end = _parse_banner_date(raw_start), _parse_banner_date(raw_end)
+    if start is None or end is None:
+        return SectionDates(start, end, f"formato inválido ('{raw_start}', '{raw_end}'), se espera MM/DD/YYYY")
+    if start >= end:
+        return SectionDates(start, end, f"inicio {start} no es anterior al fin {end}")
+
+    year, cycle, _ = describe_term(term)
+    allowed_years = {year, year + 1} if cycle == 3 else {year}
+    if start.year not in allowed_years or end.year not in allowed_years:
+        return SectionDates(start, end, f"año fuera del período {term} ({start} a {end})")
+    return SectionDates(start, end, None)
 
 
 def _parse_time(value: str) -> str | None:
@@ -461,6 +508,12 @@ class ProgramLoadStats:
 class TermLoadStats:
     term: str
     by_program: dict[str, ProgramLoadStats] = field(default_factory=dict)
+    dates_valid: int = 0
+    dates_invalid: int = 0
+    dates_missing: int = 0
+    # True si las fechas de esta corrida no son confiables (más del umbral
+    # inválidas): no se actualizaron y el período no se desactiva por fecha.
+    dates_blocked: bool = False
 
     @property
     def total(self) -> int:
@@ -483,7 +536,7 @@ def _upsert_teacher(cur, sec: dict) -> int | None:
     return cur.fetchone()[0]
 
 
-def _upsert_section(cur, sec: dict, period_id: int) -> int:
+def _upsert_section(cur, sec: dict, period_id: int, dates: SectionDates, update_dates: bool) -> int:
     """
     Upsert de una sección por (nrc, id_periodo). En conflicto se refrescan
     los datos que Banner puede cambiar entre corridas: profesor, cupos,
@@ -497,6 +550,8 @@ def _upsert_section(cur, sec: dict, period_id: int) -> int:
     - codigo_curso_banner / es_general: el NRC identifica la sección de un
       curso; si Banner reasignara un NRC a otro curso, id_curso quedaría
       apuntando al viejo -- mejor que no pase en silencio.
+    - fechas, cuando update_dates es False (fechas inválidas, faltantes o
+      período bloqueado por el umbral): se conservan las que ya había.
     """
     nrc = sec["crn"]
     cur.execute(
@@ -517,8 +572,8 @@ def _upsert_section(cur, sec: dict, period_id: int) -> int:
             inscritos = EXCLUDED.inscritos,
             disponibles = EXCLUDED.disponibles,
             estado_oferta = 'activa',
-            fecha_inicio = EXCLUDED.fecha_inicio,
-            fecha_fin = EXCLUDED.fecha_fin,
+            fecha_inicio = CASE WHEN %s THEN EXCLUDED.fecha_inicio ELSE seccion.fecha_inicio END,
+            fecha_fin = CASE WHEN %s THEN EXCLUDED.fecha_fin ELSE seccion.fecha_fin END,
             metadata = EXCLUDED.metadata,
             actualizado_en = now()
         RETURNING id_seccion
@@ -531,9 +586,10 @@ def _upsert_section(cur, sec: dict, period_id: int) -> int:
             sec.get("capacity", 0), sec.get("enrolled", 0),
             sec.get("available", 0),
             sec.get("is_general", False),
-            _parse_banner_date(sec.get("start_date"), nrc, "fecha_inicio"),
-            _parse_banner_date(sec.get("end_date"), nrc, "fecha_fin"),
+            dates.start if update_dates else None,
+            dates.end if update_dates else None,
             json.dumps(sec.get("metadata") or {}),
+            update_dates, update_dates,
         ),
     )
     return cur.fetchone()[0]
@@ -618,6 +674,36 @@ def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, d
     esto (ver decide_active).
     """
     stats = TermLoadStats(term)
+
+    # Fechas: se validan TODAS antes de escribir nada, para decidir el
+    # umbral del período completo.
+    dates_by_nrc: dict[str, SectionDates] = {}
+    for data in extraction.values():
+        for sec in data.get("sections") or []:
+            dates = _validate_section_dates(sec, term)
+            dates_by_nrc[sec["crn"]] = dates
+            if dates.valid:
+                stats.dates_valid += 1
+            elif dates.missing:
+                stats.dates_missing += 1
+                log.warning(f"  ⚠ NRC {sec['crn']}: Banner no trae fechas, se conservan las existentes")
+            else:
+                stats.dates_invalid += 1
+                log.warning(f"  ⚠ NRC {sec['crn']}: {dates.problem}, se conservan las fechas existentes")
+
+    total = len(dates_by_nrc)
+    if total and stats.dates_invalid / total > DATE_INVALID_THRESHOLD:
+        stats.dates_blocked = True
+        log.warning(
+            f"  ⚠ {term}: {stats.dates_invalid}/{total} secciones con fechas inválidas "
+            f"(> {DATE_INVALID_THRESHOLD:.0%}); no se actualiza ninguna fecha del período "
+            f"y no se desactiva por fecha en esta corrida"
+        )
+    log.info(
+        f"  {term}: fechas válidas {stats.dates_valid}/{total} "
+        f"(inválidas {stats.dates_invalid}, sin fechas {stats.dates_missing})"
+    )
+
     with conn.cursor() as cur:
         for program, data in extraction.items():
             sections = data.get("sections") or []
@@ -626,7 +712,10 @@ def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, d
             stats.by_program[program] = pstats
 
             for sec in sections:
-                section_id = _upsert_section(cur, sec, period_id)
+                dates = dates_by_nrc[sec["crn"]]
+                section_id = _upsert_section(
+                    cur, sec, period_id, dates, update_dates=dates.valid and not stats.dates_blocked
+                )
                 _replace_schedule(cur, section_id, sec)
                 pstats.loaded += 1
 
@@ -879,12 +968,18 @@ def load_term(conn, term: str, extraction: dict[str, dict], career_map: dict[str
     return stats
 
 
-def apply_active_rule(conn, statuses: list[TermStatus], today: date) -> list:
+def apply_active_rule(
+    conn, statuses: list[TermStatus], today: date, untrusted_dates: set[str] | None = None
+) -> list:
     """
     Paso C: aplica decide_active a los períodos evaluados en esta corrida
     (candidatos ∪ activos en la BD) que existen en la tabla periodo. Uno
     que Banner no tiene y nunca se cargó no se inserta solo para apagarlo.
+    untrusted_dates: períodos cuyas fechas de esta corrida superaron el
+    umbral de inválidas (TermLoadStats.dates_blocked): no se desactivan
+    por fecha.
     """
+    untrusted_dates = untrusted_dates or set()
     view_only = {st.code: st.view_only for st in statuses}
     with conn.cursor() as cur:
         cur.execute(
@@ -898,7 +993,8 @@ def apply_active_rule(conn, statuses: list[TermStatus], today: date) -> list:
             (list(view_only),),
         )
         states = [
-            PeriodState(code, active, view_only.get(code, False), count, max_end)
+            PeriodState(code, active, view_only.get(code, False), count, max_end,
+                        dates_trusted=code not in untrusted_dates)
             for code, active, count, max_end in cur.fetchall()
         ]
 

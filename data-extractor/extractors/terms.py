@@ -159,6 +159,9 @@ class PeriodState:
     view_only: bool            # getTerms lo marca cerrado
     section_count: int         # secciones del período en la BD
     max_end_date: date | None  # MAX(seccion.fecha_fin) del período
+    # False si las fechas de esta corrida superaron el umbral de inválidas:
+    # la regla de "terminó" no se aplica (podrían estar con mes/día cruzados).
+    dates_trusted: bool = True
 
 
 @dataclass
@@ -173,7 +176,8 @@ def decide_active(states: list[PeriodState], today: date) -> list[ActiveDecision
     """
     periodo.activo = "visible/seleccionable en SIHA". Por período:
     - "(View Only)"/"(Sólo ver)" en getTerms -> inactivo.
-    - hoy > MAX(seccion.fecha_fin) -> inactivo (el ciclo ya terminó).
+    - hoy > MAX(seccion.fecha_fin) -> inactivo (el ciclo ya terminó), salvo
+      que las fechas de esta corrida no sean confiables (umbral de inválidas).
     - sin secciones en la BD -> se deja como está (regla de 0 secciones:
       un período nuevo no se activa; uno activo no se apaga por un
       Banner vacío).
@@ -189,6 +193,12 @@ def decide_active(states: list[PeriodState], today: date) -> list[ActiveDecision
     for st in states:
         if st.view_only:
             decisions.append(ActiveDecision(st.code, False, "getTerms lo marca cerrado (View Only)"))
+        elif st.max_end_date is not None and today > st.max_end_date and not st.dates_trusted:
+            decisions.append(ActiveDecision(
+                st.code, st.active, "fechas no confiables en esta corrida, se mantiene",
+                warning=f"{st.code}: no se desactiva por fecha ({st.max_end_date.isoformat()}) "
+                        f"porque las fechas de Banner superaron el umbral de inválidas",
+            ))
         elif st.max_end_date is not None and today > st.max_end_date:
             decisions.append(ActiveDecision(st.code, False, f"terminó el {st.max_end_date.isoformat()}"))
         elif st.section_count == 0:

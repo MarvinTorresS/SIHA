@@ -5,7 +5,12 @@ import sys, json
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extractors.banner_connector import BannerSession, TERM_CODE
+from extractors.banner_connector import BannerSession
+
+# Período a diagnosticar, por argumento (ya no hay uno hardcodeado).
+if len(sys.argv) != 2:
+    sys.exit("Uso: python <script> <periodo>  (ej. 202620)")
+TERM = sys.argv[1]
 
 # Cargar malla para ver qué códigos GEN, MAT, LIX necesita ISI
 with open("output/normalized/syllabi_normalized.json", encoding="utf-8") as f:
@@ -41,7 +46,7 @@ for subject in ["GEN", "MAT", "LIX"]:
     codigo = codigos[0]
     print(f"\nBuscando {codigo} (subject={subject})...")
     
-    sess = BannerSession()
+    sess = BannerSession(TERM)
     sess.login()
     secciones = sess.search(codigo)
     

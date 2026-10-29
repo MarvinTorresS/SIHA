@@ -1,9 +1,8 @@
 # config.py
 # Fuente única de verdad para todas las constantes del módulo ETL.
-# Importar desde cualquier extractor: from config import BANNER_BASE_URL, CICLO_ACTIVO
+# Importar desde cualquier extractor: from config import BANNER_BASE_URL, TERM_SUFFIXES
 
 import os
-from datetime import date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -41,12 +40,32 @@ BANNER_SEARCH_RESULTS_PATH   = "/StudentRegistrationSsb/ssb/searchResults/search
 BANNER_CLASS_DETAILS_PATH    = "/StudentRegistrationSsb/ssb/searchResults/getClassDetails"
 BANNER_RESTRICTIONS_PATH     = "/StudentRegistrationSsb/ssb/searchResults/getRestrictions"
 
-# Ciclo académico activo. Formato: YYYYNN donde NN es el número de ciclo.
-# Actualizar antes de cada nuevo período de matrícula.
-CICLO_ACTIVO = "202620"
+BANNER_GET_TERMS_PATH = "/StudentRegistrationSsb/ssb/classSearch/getTerms"
 
-# Texto exacto usado para filtrar secciones del Campus Coto en Banner
-CAMPUS_COTO_FILTER_TEXT = "SRB: Campus Coto"
+# Ya no hay un "ciclo activo" fijo: el ETL descubre los períodos solo (ver
+# extractors/terms.py). Códigos de período de Banner: YYYYNN. Solo se
+# manejan ciclos semestrales y el verano; cualquier otro sufijo
+# (cuatrimestres 03/13/23, trimestres 05/15/25, anual 00) es un error
+# explícito, nunca una carga silenciosa.
+# Verano = sufijo 95, NO 30 (precedente: 202595 "CICLO III (VERANO) 2025").
+TERM_SUFFIXES: dict[str, tuple[int, str]] = {
+    "10": (1, "Ciclo I"),
+    "20": (2, "Ciclo II"),
+    "95": (3, "Ciclo III (Verano)"),
+}
+
+# Override manual del descubrimiento: lista de códigos separada por comas
+# (ej. CICLOS=202620,202695). Vacío = descubrir solo.
+CICLOS_OVERRIDE_ENV = "CICLOS"
+
+# Código de campus de Banner para Campus Coto (descripción "SRB: Campus
+# Coto"). Verificado el 28/oct/2026: searchResults con txt_campus=BC trae
+# TODAS las secciones de Coto que también aparecen buscando curso por
+# curso (63 de 63 en 202620), así que sirve para descubrir períodos.
+BANNER_CAMPUS_COTO_CODE = "BC"
+
+# Texto usado para filtrar secciones del Campus Coto en la búsqueda por curso
+CAMPUS_COTO_FILTER_TEXT = "Campus Coto"
 
 # ── Mapeo Banner → carrera interna ───────────────────────────────────────────
 # Códigos de programa de Banner (extraídos del HTML de getRestrictions,
@@ -97,56 +116,6 @@ DB_NAME = os.getenv("DATABASE_NAME", "sistema_horarios")
 DB_USER = os.getenv("DATABASE_USER", "horarios")
 DB_PASSWORD = os.getenv("DATABASE_PASSWORD", "horarios_dev")
 
-# ── Ventana de ejecución del ETL automatizado (Sprint 8, automatización) ─────
-# SIHA tiene 3 períodos de matrícula al año en Campus Coto: Enero, Julio y
-# Noviembre. Todavía no conocemos el día exacto en que el Registro abre cada
-# ciclo, así que el guard usa granularidad de MES, no de día -- más simple
-# y seguro que adivinar una fecha exacta (correr de más dentro del mes
-# correcto es inofensivo; lo que hay que evitar es correr fuera de esos
-# 3 meses, cuando no tiene sentido gastar corridas ni pegarle a Banner).
-#
-# Nota importante: el riesgo original que motivó "nunca correr después de
-# que abra matrícula" (Banner omite secciones llenas/cerradas de
-# searchResults una vez abierta, y el pipeline viejo las borraba sin
-# recuperación) ya está mitigado desde Sprint 8: populate_db.py marca esas
-# secciones como estado_oferta='agotada' en vez de borrarlas (ver
-# V2__agregar_estado_oferta_seccion.sql). Por eso alcanza con acotar por mes
-# completo en vez de necesitar el día exacto de corte.
-#
-# Cuando el Registro publique el calendario oficial de un ciclo, agregar acá
-# el día límite exacto en DIA_LIMITE_ETL_POR_MES si se quiere cortar el ETL
-# antes de fin de mes (opcional, no obligatorio).
-MESES_MATRICULA_ACTIVA: set[int] = {1, 7, 11}  # enero, julio, noviembre
-
-# Día límite (inclusive) dentro de un mes de matrícula activa, si se conoce.
-# Formato: {mes: dia_limite}. Vacío por defecto -- se llena ciclo a ciclo
-# cuando se conozca la fecha exacta de apertura, si se quiere ser más
-# estricto que "todo el mes".
-DIA_LIMITE_ETL_POR_MES: dict[int, int] = {}
-
-
-def debe_correr_etl(hoy: date | None = None) -> tuple[bool, str]:
-    """
-    Decide si el ETL automatizado (run_etl.py, disparado por cron) debe
-    ejecutarse hoy. Ver comentario de MESES_MATRICULA_ACTIVA arriba para el
-    razonamiento completo.
-
-    Retorna (debe_correr, razon) -- razon se loggea siempre, corra o no,
-    para dejar rastro de por qué una corrida se saltó o se ejecutó.
-    """
-    hoy = hoy or date.today()
-
-    if hoy.month not in MESES_MATRICULA_ACTIVA:
-        return False, (
-            f"mes {hoy.month} fuera de la ventana de matrícula "
-            f"{sorted(MESES_MATRICULA_ACTIVA)}"
-        )
-
-    limite = DIA_LIMITE_ETL_POR_MES.get(hoy.month)
-    if limite is not None and hoy.day > limite:
-        return False, (
-            f"día {hoy.day} excede el límite configurado ({limite}) "
-            f"para el mes {hoy.month}"
-        )
-
-    return True, "dentro de la ventana de matrícula activa"
+# Timeout corto para el chequeo de conexión inicial de run_etl.py: si la BD
+# no responde, abortar en segundos ANTES de pegarle a Banner.
+DB_CONNECT_TIMEOUT_SECONDS = 10

@@ -8,7 +8,12 @@ import sys, json, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extractors.banner_connector import BannerSession, TERM_CODE
+from extractors.banner_connector import BannerSession
+
+# Período a diagnosticar, por argumento (ya no hay uno hardcodeado).
+if len(sys.argv) != 2:
+    sys.exit("Uso: python <script> <periodo>  (ej. 202620)")
+TERM = sys.argv[1]
 
 SUBJECTS_GENERALES = ["EGF", "EGC", "EGS", "EGA"]
 RANGO_NUMEROS = range(100, 500)  # Cubre 1XX, 2XX, 3XX, 4XX
@@ -29,7 +34,7 @@ for subject in SUBJECTS_GENERALES:
         total_buscados += 1
         
         # Crear sesión limpia para cada búsqueda
-        session = BannerSession()
+        session = BannerSession(TERM)
         try:
             session.login()
         except Exception as e:

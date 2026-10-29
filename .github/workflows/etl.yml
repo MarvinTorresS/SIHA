@@ -1,29 +1,56 @@
 name: ETL Banner + Malla (automatizado)
 
-# Corre a diario, pero run_etl.py trae su propio guard (debe_correr_etl en
-# config.py): solo hace algo si estamos en Enero, Julio o Noviembre (meses
-# de matrícula en Campus Coto). Fuera de esos meses, el job termina en
-# segundos sin tocar la base de datos.
+# Corre a diario todo el año. Ya no hay guard de meses: run_etl.py descubre
+# solo los períodos con secciones Coto en Banner y la regla de 0 secciones
+# evita que un Banner vacío marque secciones 'agotada' o apague períodos.
 #
-# workflow_dispatch permite dispararlo a mano desde la pestaña Actions de
-# GitHub, útil para probar el guard o forzar una corrida puntual.
+# workflow_dispatch permite dispararlo a mano desde la pestaña Actions:
+# - ciclos: fuerza períodos puntuales (ej. "202620,202695"), sin
+#   descubrimiento. Igual respeta "(View Only)".
+# - solo_verificar_bd: solo prueba la conexión a la BD y lista los
+#   períodos, sin pegarle a Banner ni escribir nada.
 on:
   schedule:
     # 12:00 UTC = 06:00 hora Costa Rica (UTC-6)
     - cron: "0 12 * * *"
   workflow_dispatch:
     inputs:
-      forzar_guard:
-        description: "Forzar la corrida ignorando el guard de mes (solo para pruebas puntuales -- corre contra la BD real)"
+      ciclos:
+        description: "Períodos a forzar, separados por coma (vacío = descubrir solo)"
+        type: string
+        default: ""
+      solo_verificar_bd:
+        description: "Solo verificar la conexión a la BD (python run_etl.py --check-db)"
         type: boolean
         default: false
 
 jobs:
+  # GitHub desactiva los workflows programados tras 60 días sin actividad
+  # en el repo (temporada baja de SIHA). Re-habilitarlo a diario desde el
+  # mismo cron evita que el ETL se apague solo.
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Mantener el workflow habilitado
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/etl.yml/enable"
+
   etl:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: data-extractor
+    env:
+      DATABASE_HOST: ${{ secrets.DATABASE_HOST }}
+      DATABASE_PORT: ${{ secrets.DATABASE_PORT }}
+      DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
+      DATABASE_USER: ${{ secrets.DATABASE_USER }}
+      DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
     steps:
       - name: Checkout del repo
         uses: actions/checkout@v4
@@ -36,14 +63,17 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Ejecutar ETL (con guard de ventana de matrícula)
+      - name: Verificar conexión a la BD (solo_verificar_bd)
+        if: ${{ github.event.inputs.solo_verificar_bd == 'true' }}
+        run: python run_etl.py --check-db
+
+      # run_etl.py genera syllabi_normalized.json (excel_loader) antes de
+      # extraer: no está en git y sin él banner_connector no puede correr.
+      # Antes de Banner hace el mismo chequeo de conexión que --check-db.
+      - name: Ejecutar ETL
+        if: ${{ github.event.inputs.solo_verificar_bd != 'true' }}
         env:
-          DATABASE_HOST: ${{ secrets.DATABASE_HOST }}
-          DATABASE_PORT: ${{ secrets.DATABASE_PORT }}
-          DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
-          DATABASE_USER: ${{ secrets.DATABASE_USER }}
-          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
-          FORZAR_ETL: ${{ github.event.inputs.forzar_guard }}
+          CICLOS: ${{ github.event.inputs.ciclos }}
         run: python run_etl.py
 
       - name: Subir logs (si falló)

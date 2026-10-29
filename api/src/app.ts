@@ -4,6 +4,7 @@ import cursoRoutes from "./routes/curso.routes";
 import mallaRoutes from "./routes/malla.routes";
 import prerrequisitoRoutes from "./routes/prerrequisito.routes";
 import horarioRoutes from "./routes/horario.routes";
+import periodoRoutes from "./routes/periodo.routes";
 import { notFoundHandler, globalErrorHandler } from "./middleware/errorHandler";
 import { estudianteRouter } from "./routes/estudiante.routes"; // ajusta la ruta real
 import { authRouter } from "./routes/auth.routes";
@@ -26,6 +27,7 @@ export function createApp() {
   app.use("/api/mallas", mallaRoutes);
   app.use("/api/prerrequisitos", prerrequisitoRoutes);
   app.use("/api/horarios", horarioRoutes);
+  app.use("/api/periodos", periodoRoutes);
   app.use("/api", estudianteRouter);
   app.use("/api", authRouter);
 

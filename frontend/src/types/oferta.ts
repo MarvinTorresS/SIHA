@@ -1,4 +1,5 @@
 import type { BloqueHorario } from "./seccion"
+import type { PeriodoRef } from "./periodo"
 
 export type EstadoOferta = "aprobado" | "cursando" | "elegible" | "bloqueado"
 
@@ -18,6 +19,9 @@ export interface SeccionOferta {
 export interface PrerequisitoFaltante {
   code: string
   name: string
+  /** true si el estudiante lo tiene "cursando": no cuenta como aprobado,
+   * debe marcarlo en la Malla cuando lo apruebe. */
+  enCurso: boolean
 }
 
 export interface CorequisitoOferta {
@@ -55,8 +59,12 @@ export interface CursoOferta {
   motivoBloqueo: string | null
   /** Informativo siempre que existan -- no bloquea la elegibilidad. */
   corequisitos: CorequisitoOferta[]
-  /** Solo presente cuando estado === "cursando". */
+  /** Solo presente cuando estado === "cursando". Puede ser una sección de
+   * otro período (ver periodoCursando). */
   seccionActual: SeccionOferta | null
+  /** Solo presente cuando estado === "cursando": el período en que está
+   * matriculado, que puede no ser el seleccionado. */
+  periodoCursando: PeriodoRef | null
   /** Secciones ofertadas por Banner este período para este curso. */
   secciones: SeccionOferta[]
 }

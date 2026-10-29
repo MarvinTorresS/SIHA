@@ -34,7 +34,8 @@ function toSeccion(curso: CursoOferta, s: SeccionOferta): Seccion {
 }
 
 function resumenHorario(horarios: SeccionOferta["horarios"]): string {
-  if (horarios.length === 0) return "Sin horario asignado"
+  // Típico de ciclos futuros: Banner publica la sección antes que su horario.
+  if (horarios.length === 0) return "Horario aún no publicado"
   return horarios
     .map((h) => `${h.dia.slice(0, 3)} ${h.horaInicio}-${h.horaFin}`)
     .join(" · ")
@@ -101,6 +102,10 @@ interface CursoOfertaCardProps {
   /** Mismo criterio que limiteGeneralesAlcanzado, para el tope de
    * optativas de la carrera (dinámico, no siempre 4). */
   limiteOptativasAlcanzado: boolean
+  /** Código del ciclo que se está viendo. Un curso "cursando" en OTRO
+   * ciclo se muestra como tal pero no se puede quitar desde acá (sería
+   * dar de baja la matrícula de ese otro ciclo). */
+  periodoSeleccionado: string
 }
 
 export function CursoOfertaCard({
@@ -109,6 +114,7 @@ export function CursoOfertaCard({
   quitandoConfirmado,
   limiteGeneralesAlcanzado,
   limiteOptativasAlcanzado,
+  periodoSeleccionado,
 }: CursoOfertaCardProps) {
   const [abierto, setAbierto] = useState(false)
   const area = resolverArea(curso.codigo)
@@ -126,6 +132,10 @@ export function CursoOfertaCard({
   const optativaBloqueadaPorTope =
     curso.esOptativa && !seccionElegida && limiteOptativasAlcanzado
   const bloqueadoPorTope = generalBloqueadoPorTope || optativaBloqueadaPorTope
+  const cursandoEnOtroPeriodo =
+    curso.estado === "cursando" &&
+    curso.periodoCursando !== null &&
+    curso.periodoCursando.codigo !== periodoSeleccionado
 
   function elegirSeccion(s: SeccionOferta) {
     const nueva = toSeccion(curso, s)
@@ -166,7 +176,12 @@ export function CursoOfertaCard({
           <p className="text-xs text-muted-foreground">
             Requiere aprobar:{" "}
             <span className="font-medium text-foreground">
-              {curso.prerrequisitosFaltantes.map((p) => codigoVisible(p.code)).join(", ")}
+              {/* "(en curso)": ese prerrequisito está cursando y no cuenta
+                  como aprobado -- el estudiante debe marcarlo en la Malla
+                  cuando lo apruebe. */}
+              {curso.prerrequisitosFaltantes
+                .map((p) => `${codigoVisible(p.code)}${p.enCurso ? " (en curso)" : ""}`)
+                .join(", ")}
             </span>
           </p>
         )}
@@ -181,7 +196,13 @@ export function CursoOfertaCard({
           </p>
         )}
 
-        {curso.estado === "cursando" && curso.seccionActual && (
+        {cursandoEnOtroPeriodo && (
+          <p className="text-xs text-muted-foreground">
+            Cursando en {curso.periodoCursando!.nombre}
+          </p>
+        )}
+
+        {curso.estado === "cursando" && curso.seccionActual && !cursandoEnOtroPeriodo && (
           <div className="rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs space-y-1">
             <div className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-1 font-mono font-semibold">

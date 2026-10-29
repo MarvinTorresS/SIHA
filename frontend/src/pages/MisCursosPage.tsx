@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CursoOfertaCard } from "@/components/mis-cursos/CursoOfertaCard"
 import { CalendarioSemanal } from "@/components/mis-cursos/CalendarioSemanal"
+import { PeriodoSelect } from "@/components/shared/PeriodoSelect"
+import { usePeriodoSeleccionado } from "@/hooks/usePeriodoSeleccionado"
 import { useAuthStore } from "@/store/authStore"
 import { useHorarioStore } from "@/store/horarioStore"
 import { estudianteService } from "@/services/estudiante.service"
@@ -48,23 +50,48 @@ export function MisCursosPage() {
   const estudiante = useAuthStore((s) => s.estudiante)
   const queryClient = useQueryClient()
 
+  const setPeriodoHorario = useHorarioStore((s) => s.setPeriodo)
   const cargarSeccionesFijas = useHorarioStore((s) => s.cargarSeccionesFijas)
   const seccionesManuales = useHorarioStore((s) => s.seccionesManuales)
   const limpiarSeccionesManuales = useHorarioStore((s) => s.limpiarSeccionesManuales)
 
+  const {
+    periodos,
+    periodo,
+    setPeriodo,
+    isLoading: isLoadingPeriodos,
+    error: errorPeriodos,
+  } = usePeriodoSeleccionado()
+  const codigoPeriodo = periodo?.codigo
+
+  // Primero el período, después las fijas: el store de horario descarta
+  // el borrador/fijas del ciclo anterior antes de cargar los del nuevo.
+  // Este efecto va ANTES del de las fijas a propósito (mismo commit de
+  // React = se ejecutan en orden de declaración).
+  useEffect(() => {
+    if (codigoPeriodo) setPeriodoHorario(codigoPeriodo)
+  }, [codigoPeriodo, setPeriodoHorario])
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["oferta-ciclo", estudiante?.carnet],
-    queryFn: () => estudianteService.obtenerOferta(estudiante!.carnet),
-    enabled: !!estudiante,
+    queryKey: ["oferta-ciclo", estudiante?.carnet, codigoPeriodo],
+    queryFn: () => estudianteService.obtenerOferta(estudiante!.carnet, codigoPeriodo!),
+    enabled: !!estudiante && !!codigoPeriodo,
   })
 
-  // Los cursos "cursando" (ya matriculados institucionalmente, o recién
+  // Los cursos "cursando" DE ESTE PERÍODO (ya matriculados, o recién
   // confirmados desde esta misma pantalla) se cargan como secciones fijas
-  // del horario -- no son una elección editable acá.
+  // del horario -- no son una elección editable acá. Un curso cursando en
+  // otro ciclo aparece igual en la lista, pero su sección es de ese otro
+  // ciclo y no entra a este calendario.
   useEffect(() => {
-    if (!data) return
+    if (!data || !codigoPeriodo) return
     const nrcsCursando = data
-      .filter((c) => c.estado === "cursando" && c.seccionActual)
+      .filter(
+        (c) =>
+          c.estado === "cursando" &&
+          c.seccionActual &&
+          c.periodoCursando?.codigo === codigoPeriodo
+      )
       .map((c) => c.seccionActual!.nrc)
     cargarSeccionesFijas(nrcsCursando)
     // cargarSeccionesFijas es estable (Zustand); solo debe repetirse
@@ -72,6 +99,10 @@ export function MisCursosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
 
+  const errorCarga = error ?? errorPeriodos
+
+  // Prefijo sin período: matricular o quitar un curso cambia su estado
+  // ("Cursando") en la oferta de TODOS los ciclos, no solo en este.
   const invalidarOferta = () =>
     queryClient.invalidateQueries({ queryKey: ["oferta-ciclo", estudiante?.carnet] })
 
@@ -80,7 +111,10 @@ export function MisCursosPage() {
   // automático. Se apaga solo si vuelve a armar un borrador nuevo
   // (seccionesManuales > 0 otra vez): no hace falta un efecto aparte,
   // la condición de render ya lo cubre (ver más abajo).
-  const [matriculaRecienConfirmada, setMatriculaRecienConfirmada] = useState(false)
+  // Guarda el período en que se confirmó, no un boolean: al cambiar de
+  // ciclo el CTA no debe quedar mostrándose para un ciclo sin matrícula.
+  const [matriculaConfirmadaEn, setMatriculaConfirmadaEn] = useState<string | null>(null)
+  const matriculaRecienConfirmada = matriculaConfirmadaEn !== null && matriculaConfirmadaEn === codigoPeriodo
 
   // <xl (tablet/mobile): "Cursos" y "Horario" son tabs, una a la vez.
   // ≥xl: ambas se fuerzan visibles como paneles simultáneos (ver
@@ -89,16 +123,16 @@ export function MisCursosPage() {
   const [tabActiva, setTabActiva] = useState<"cursos" | "horario">("cursos")
 
   const confirmarMatriculaMutation = useMutation({
-    mutationFn: (nrcs: string[]) =>
-      estudianteService.confirmarMatricula(estudiante!.carnet, nrcs),
-    onSuccess: () => {
+    mutationFn: ({ nrcs, periodo }: { nrcs: string[]; periodo: string }) =>
+      estudianteService.confirmarMatricula(estudiante!.carnet, nrcs, periodo),
+    onSuccess: (_resultado, { periodo }) => {
       // El borrador ya quedó escrito en la BD como "cursando" -- se
       // limpia el borrador local para que no se cuente dos veces (una
       // vez como manual, otra como fija) cuando refetch traiga los
       // mismos cursos ya con estado "cursando".
       limpiarSeccionesManuales()
       invalidarOferta()
-      setMatriculaRecienConfirmada(true)
+      setMatriculaConfirmadaEn(periodo)
       // Cambio de tab, no navegación de ruta -- no choca con "sin
       // redirect automático" (ese principio es sobre cruzar a /horario,
       // ver el Link "Ver mi horario" más abajo, que sigue intacto). Es
@@ -182,16 +216,23 @@ export function MisCursosPage() {
         title="Mis Cursos"
         description={
           estudiante
-            ? `${estudiante.carrera.nombre} · oferta del período activo`
+            ? `${estudiante.carrera.nombre} · oferta de ${periodo?.nombre ?? "…"}`
             : undefined
         }
         actions={
           <Button
             size="sm"
             className="gap-1.5"
-            disabled={seccionesManuales.length === 0 || confirmarMatriculaMutation.isPending}
+            disabled={
+              !codigoPeriodo ||
+              seccionesManuales.length === 0 ||
+              confirmarMatriculaMutation.isPending
+            }
             onClick={() =>
-              confirmarMatriculaMutation.mutate(seccionesManuales.map((s) => s.nrc))
+              confirmarMatriculaMutation.mutate({
+                nrcs: seccionesManuales.map((s) => s.nrc),
+                periodo: codigoPeriodo!,
+              })
             }
           >
             <CheckCircle2 className="size-4" />
@@ -223,6 +264,17 @@ export function MisCursosPage() {
             </AlertDescription>
           </Alert>
         )}
+
+        {/* Selector de ciclo arriba de todo: decide qué oferta, secciones y
+            calendario se ven, en ambos paneles (por eso no vive dentro de
+            la tab "Cursos"). En xl se alinea con el panel de la lista. */}
+        <PeriodoSelect
+          periodos={periodos}
+          periodo={periodo}
+          onChange={setPeriodo}
+          isLoading={isLoadingPeriodos}
+          className="mb-4 xl:max-w-[560px]"
+        />
 
         {/* <xl: "Cursos" y "Horario" son tabs (una a la vez, el layout de
             2 paneles simultáneos no entra cómodo por debajo de esto).
@@ -294,19 +346,19 @@ export function MisCursosPage() {
               </div>
             </div>
 
-            {error && (
+            {errorCarga && (
               <Alert variant="destructive">
                 <AlertDescription>
                   {import.meta.env.DEV
-                    ? error instanceof ApiError
-                      ? `${error.status}: ${error.message}`
+                    ? errorCarga instanceof ApiError
+                      ? `${errorCarga.status}: ${errorCarga.message}`
                       : "No se pudo conectar con la API. ¿Está corriendo en localhost:3000?"
                     : "No pudimos cargar la oferta de cursos. Intenta de nuevo más tarde."}
                 </AlertDescription>
               </Alert>
             )}
 
-            {isLoading && (
+            {(isLoading || isLoadingPeriodos) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[...Array(6)].map((_, i) => (
                   <Card key={i}>
@@ -318,7 +370,22 @@ export function MisCursosPage() {
               </div>
             )}
 
-            {data && cursosFiltrados.length === 0 && (
+            {/* Dos vacíos distintos: el ciclo no tiene oferta para la
+                carrera (ej. Topografía en 2027, Banner no publicó nada
+                todavía) vs. los filtros no dejan nada. */}
+            {data && data.length === 0 && (
+              <div className="py-8 text-center space-y-1">
+                <p className="text-sm font-medium">
+                  Todavía no hay oferta de {estudiante?.carrera.nombre} en {periodo?.nombre}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Banner no publicó secciones de tu carrera para este ciclo. Probá con otro
+                  ciclo o volvé más adelante.
+                </p>
+              </div>
+            )}
+
+            {data && data.length > 0 && cursosFiltrados.length === 0 && (
               <p className="text-sm text-muted-foreground py-8 text-center">
                 Ningún curso coincide con la búsqueda o los filtros.
               </p>
@@ -337,6 +404,7 @@ export function MisCursosPage() {
                     }
                     limiteGeneralesAlcanzado={limiteGeneralesAlcanzado}
                     limiteOptativasAlcanzado={limiteOptativasAlcanzado}
+                    periodoSeleccionado={codigoPeriodo!}
                   />
                 ))}
               </div>

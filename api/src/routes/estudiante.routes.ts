@@ -6,11 +6,11 @@ import {
   marcarCursoAprobado,
   desmarcarCurso,
   getSeccionesCursando,
+  getPeriodosHorario,
   obtenerOpcionesParaSlot,
   asignarCursoRealASlot,
   desasignarSlotMalla,
   EstudianteNoEncontradoError,
-  PeriodoActivoInvalidoError,
   CursoNoEncontradoError,
   CursoFueraDeCarreraError,
   CursoNoMarcableError,
@@ -20,8 +20,13 @@ import {
   CursoYaAsignadoAOtroSlotError,
   TopeGeneralesMatriculaError,
   TopeOptativasMatriculaError,
+  CursoYaAprobadoError,
+  CursoCursandoEnOtroPeriodoError,
+  PrerrequisitosNoCumplidosError,
 } from "../services/estudiante.service";
 import { requireAuth, requireOwnCarnet } from "../middleware/requireAuth";
+import { respondPeriodError } from "../middleware/periodErrors";
+import { readPeriodQuery } from "../services/periodo.service";
 
 export const estudianteRouter = Router();
 
@@ -50,10 +55,7 @@ estudianteRouter.get(
       if (err instanceof EstudianteNoEncontradoError) {
         return res.status(404).json({ error: err.message });
       }
-      if (err instanceof PeriodoActivoInvalidoError) {
-        // Error de configuración de datos, no del cliente -> 500.
-        return res.status(500).json({ error: err.message });
-      }
+      if (respondPeriodError(err, res)) return;
       // Red de seguridad; el errorHandler global también lo captura si
       // este bloque se omite, pero se deja explícito por consistencia
       // con el resto de rutas del proyecto.
@@ -66,7 +68,9 @@ estudianteRouter.get(
 /**
  * GET /api/estudiantes/:carnet/oferta
  *
- * Oferta de cursos del período activo para la carrera del propio
+ * Query opcional: ?periodo=<codigo> (default: el período predeterminado).
+ *
+ * Oferta de cursos de un período para la carrera del propio
  * estudiante, con estado ya resuelto (aprobado / cursando / elegible /
  * bloqueado) cruzando Banner + historial + el motor de prerrequisitos.
  * Ver getOfertaCiclo en estudiante.service.ts para el detalle completo.
@@ -82,15 +86,13 @@ estudianteRouter.get(
     const carnet = req.params.carnet as string;
 
     try {
-      const oferta = await getOfertaCiclo(carnet);
+      const oferta = await getOfertaCiclo(carnet, readPeriodQuery(req.query.periodo));
       return res.json(oferta);
     } catch (err) {
       if (err instanceof EstudianteNoEncontradoError) {
         return res.status(404).json({ error: err.message });
       }
-      if (err instanceof PeriodoActivoInvalidoError) {
-        return res.status(500).json({ error: err.message });
-      }
+      if (respondPeriodError(err, res)) return;
       console.error("Error en GET /estudiantes/:carnet/oferta", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }
@@ -102,7 +104,8 @@ estudianteRouter.get(
  *
  * Secciones confirmadas ("cursando") del estudiante, para la pantalla Mi
  * Horario -- lee directo de historial_curso, independiente de la oferta
- * del período activo (a diferencia de /oferta). Ver getSeccionesCursando
+ * de un período (a diferencia de /oferta). Query opcional: ?periodo=<codigo>;
+ * acepta un período finalizado solo si el estudiante tiene 'cursando' en él. Ver getSeccionesCursando
  * en estudiante.service.ts.
  */
 estudianteRouter.get(
@@ -113,12 +116,13 @@ estudianteRouter.get(
     const carnet = req.params.carnet as string;
 
     try {
-      const secciones = await getSeccionesCursando(carnet);
+      const secciones = await getSeccionesCursando(carnet, readPeriodQuery(req.query.periodo));
       return res.json(secciones);
     } catch (err) {
       if (err instanceof EstudianteNoEncontradoError) {
         return res.status(404).json({ error: err.message });
       }
+      if (respondPeriodError(err, res)) return;
       console.error("Error en GET /estudiantes/:carnet/secciones-cursando", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }
@@ -126,8 +130,33 @@ estudianteRouter.get(
 );
 
 /**
+ * GET /api/estudiantes/:carnet/periodos-horario
+ *
+ * Períodos del selector de Mi Horario: los activos más los finalizados
+ * donde el estudiante todavía tiene cursos 'cursando' (finalizado=true,
+ * solo lectura). Mis Cursos usa GET /api/periodos (solo activos).
+ */
+estudianteRouter.get(
+  "/estudiantes/:carnet/periodos-horario",
+  requireAuth,
+  requireOwnCarnet,
+  async (req: Request, res: Response) => {
+    const carnet = req.params.carnet as string;
+    try {
+      return res.json(await getPeriodosHorario(carnet));
+    } catch (err) {
+      if (err instanceof EstudianteNoEncontradoError) {
+        return res.status(404).json({ error: err.message });
+      }
+      console.error("Error en GET /estudiantes/:carnet/periodos-horario", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+  }
+);
+
+/**
  * POST /api/estudiantes/:carnet/matricula
- * Body: { nrcs: string[] }
+ * Body: { nrcs: string[] }  Query opcional: ?periodo=<codigo>
  *
  * Confirma la matrícula del borrador armado en Mis Cursos: cada NRC pasa
  * su curso a estado 'cursando' en historial_curso. Ver confirmarMatricula
@@ -151,7 +180,7 @@ estudianteRouter.post(
     }
 
     try {
-      await confirmarMatricula(carnet, nrcs);
+      await confirmarMatricula(carnet, nrcs, readPeriodQuery(req.query.periodo));
       return res.status(204).send();
     } catch (err) {
       if (err instanceof EstudianteNoEncontradoError) {
@@ -169,9 +198,14 @@ estudianteRouter.post(
       if (err instanceof TopeOptativasMatriculaError) {
         return res.status(409).json({ error: err.message });
       }
-      if (err instanceof PeriodoActivoInvalidoError) {
-        return res.status(500).json({ error: err.message });
+      if (
+        err instanceof CursoYaAprobadoError ||
+        err instanceof CursoCursandoEnOtroPeriodoError ||
+        err instanceof PrerrequisitosNoCumplidosError
+      ) {
+        return res.status(409).json({ error: err.message });
       }
+      if (respondPeriodError(err, res)) return;
       console.error("Error en POST /estudiantes/:carnet/matricula", err);
       return res.status(500).json({ error: "Error interno del servidor" });
     }

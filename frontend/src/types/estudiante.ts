@@ -5,6 +5,7 @@
  */
 
 import type { CarreraSigla } from "./academico"
+import type { PeriodoRef } from "./periodo"
 
 export type EstadoCursoProgreso =
   | "aprobado"
@@ -42,6 +43,8 @@ export interface CursoConProgreso {
   cursoRealNombre: string | null
   /** Solo presente si historial_curso.id_seccion no es null (típico en "cursando") */
   seccion: SeccionInfo | null
+  /** Solo presente en "cursando": período de la matrícula. */
+  periodoCursando: PeriodoRef | null
 }
 
 export interface SemestreProgreso {
@@ -56,6 +59,8 @@ export interface MallaProgresoResponse {
     nombre: string
     cicloActualId: string
   }
+  /** Período en curso; contra él se compara periodoCursando. */
+  periodoPredeterminado: PeriodoRef
   carrera: {
     idCarrera: number
     sigla: CarreraSigla

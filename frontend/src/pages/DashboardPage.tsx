@@ -9,8 +9,12 @@ import {
   BookOpen,
   User,
   MapPin,
+  CalendarCheck,
 } from "lucide-react"
 import { resolverArea, codigoVisible } from "@/lib/curso-area"
+import { nombrePeriodoSiDistinto } from "@/lib/periodo"
+import { usePeriodoSeleccionado } from "@/hooks/usePeriodoSeleccionado"
+import type { PeriodoRef } from "@/types/periodo"
 import { Header } from "@/components/layout/Header"
 import { EstadoBadge } from "@/components/shared/EstadoBadge"
 import { useAuthStore } from "@/store/authStore"
@@ -58,7 +62,14 @@ function StatCard({ icon: Icon, iconClassName, value, label, sublabel }: StatCar
 // Card de curso matriculado
 // -----------------------------------------------------------------------
 
-function CursoMatriculadoCard({ curso }: { curso: CursoConProgreso }) {
+function CursoMatriculadoCard({
+  curso,
+  otroPeriodo,
+}: {
+  curso: CursoConProgreso
+  /** Nombre del ciclo si la matrícula NO es del ciclo en curso. */
+  otroPeriodo: string | null
+}) {
   const esSinSeccion = curso.estado === "sin_seccion"
   const area = resolverArea(curso.codigo)
 
@@ -92,6 +103,10 @@ function CursoMatriculadoCard({ curso }: { curso: CursoConProgreso }) {
           </span>
         </div>
 
+        {otroPeriodo && (
+          <p className="text-xs text-muted-foreground">Cursando en {otroPeriodo}</p>
+        )}
+
         {curso.seccion ? (
           <div className="space-y-1.5 pt-1 border-t border-border/60">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -105,6 +120,12 @@ function CursoMatriculadoCard({ curso }: { curso: CursoConProgreso }) {
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <User className="size-3.5 shrink-0" />
                 <span className="truncate">{curso.seccion.profesor}</span>
+              </div>
+            )}
+            {curso.seccion.horarios.length === 0 && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="size-3.5 shrink-0" />
+                <span>Horario aún no publicado</span>
               </div>
             )}
             {curso.seccion.horarios.map((h, i) => (
@@ -163,7 +184,32 @@ export function DashboardPage() {
   const cursosMatriculados = todosLosCursos.filter(
     (c) => (c.estado === "cursando" || c.estado === "sin_seccion") && !esSlotGeneralCubierto(c)
   )
-  const creditosCicloActual = cursosMatriculados.reduce(
+  // Con varios ciclos abiertos, un curso puede estar matriculado en un
+  // ciclo futuro (ej. el verano): se lista igual, marcado con su ciclo,
+  // pero no cuenta en "Cursos este ciclo" ni en sus créditos.
+  const codigoPredeterminado = progreso?.periodoPredeterminado.codigo
+  const otroPeriodoDe = (c: CursoConProgreso) =>
+    nombrePeriodoSiDistinto(c.periodoCursando, codigoPredeterminado)
+  const cursosCicloActual = cursosMatriculados.filter((c) => otroPeriodoDe(c) === null)
+  // Ciclos ya inactivos (terminados o cerrados) donde quedan cursos
+  // "cursando": el estudiante tiene que marcar en la Malla cuáles aprobó.
+  // El aviso desaparece solo cuando no queda ninguno.
+  const { periodos: periodosActivos } = usePeriodoSeleccionado()
+  const codigosActivos = new Set(periodosActivos.map((p) => p.codigo))
+  const ciclosTerminados = Array.from(
+    new Map(
+      todosLosCursos
+        .filter(
+          (c) =>
+            c.estado === "cursando" &&
+            c.periodoCursando !== null &&
+            periodosActivos.length > 0 &&
+            !codigosActivos.has(c.periodoCursando.codigo)
+        )
+        .map((c) => [c.periodoCursando!.codigo, c.periodoCursando!] as [string, PeriodoRef])
+    ).values()
+  )
+  const creditosCicloActual = cursosCicloActual.reduce(
     (sum, c) => sum + Number(c.creditos),
     0
   )
@@ -227,6 +273,25 @@ export function DashboardPage() {
 
         {progreso && (
           <>
+            {/* Neutro a propósito (Alert default, sin rojo UNA ni ámbar):
+                no es un error, es un recordatorio de algo pendiente. */}
+            {ciclosTerminados.map((ciclo) => (
+              <Alert key={ciclo.codigo}>
+                <CalendarCheck className="size-4" />
+                <AlertDescription className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <span>
+                    Tu {ciclo.nombre} terminó: marcá en la Malla los cursos que aprobaste.
+                  </span>
+                  <Link
+                    to="/malla"
+                    className="flex items-center gap-1 font-medium text-foreground underline underline-offset-2"
+                  >
+                    Ir a la Malla <ChevronRight className="size-4" />
+                  </Link>
+                </AlertDescription>
+              </Alert>
+            ))}
+
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard
                 icon={TrendingUp}
@@ -252,7 +317,7 @@ export function DashboardPage() {
               <StatCard
                 icon={BookOpen}
                 iconClassName="text-estado-sin-seccion"
-                value={cursosMatriculados.length}
+                value={cursosCicloActual.length}
                 label="Cursos este ciclo"
                 sublabel={`${creditosCicloActual} créditos`}
               />
@@ -307,7 +372,9 @@ export function DashboardPage() {
               <CardHeader>
                 <CardTitle>Cursos matriculados actualmente</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {cursosMatriculados.length} cursos · {creditosCicloActual} créditos
+                  {cursosCicloActual.length} cursos · {creditosCicloActual} créditos
+                  {cursosMatriculados.length > cursosCicloActual.length &&
+                    ` · ${cursosMatriculados.length - cursosCicloActual.length} en otros ciclos`}
                 </p>
               </CardHeader>
               <CardContent>
@@ -318,7 +385,11 @@ export function DashboardPage() {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {cursosMatriculados.map((curso) => (
-                      <CursoMatriculadoCard key={curso.idCurso} curso={curso} />
+                      <CursoMatriculadoCard
+                        key={curso.idCurso}
+                        curso={curso}
+                        otroPeriodo={otroPeriodoDe(curso)}
+                      />
                     ))}
                   </div>
                 )}

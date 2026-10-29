@@ -6,6 +6,13 @@ import { horariosService } from "@/services/horarios.service"
 
 interface HorarioState {
   // --- Estado ---
+  /** Período al que pertenecen las secciones de este store. Todo lo de
+   * abajo (fijas, borrador, conflictos) es SOLO de este período: el NRC no
+   * es único entre ciclos y un borrador no se arrastra de un ciclo a otro. */
+  periodo: string | null
+  /** Borradores de los OTROS períodos, guardados al cambiar de ciclo para
+   * recuperarlos al volver (en memoria, no se persisten). */
+  borradoresPorPeriodo: Record<string, Seccion[]>
   seccionesFijas: Map<string, Seccion>
   seccionesManuales: Seccion[]
   conflictos: ConflictoHorario[]
@@ -13,6 +20,9 @@ interface HorarioState {
   errorValidacion: string | null
 
   // --- Acciones ---
+  /** Cambia el período activo del store: guarda el borrador actual bajo
+   * su período, carga el del nuevo (o vacío) y limpia fijas/conflictos. */
+  setPeriodo: (periodo: string) => void
   cargarSeccionesFijas: (nrcs: string[]) => Promise<void>
   agregarSeccionManual: (seccion: Seccion) => Promise<void>
   removerSeccionManual: (nrc: string) => Promise<void>
@@ -35,6 +45,8 @@ interface HorarioState {
 
 export const useHorarioStore = create<HorarioState>((set, get) => ({
   // --- Estado inicial ---
+  periodo: null,
+  borradoresPorPeriodo: {},
   seccionesFijas: new Map(),
   seccionesManuales: [],
   conflictos: [],
@@ -42,10 +54,36 @@ export const useHorarioStore = create<HorarioState>((set, get) => ({
   errorValidacion: null,
 
   // --- Acciones ---
+  setPeriodo: (periodo: string) => {
+    const { periodo: actual, seccionesManuales, borradoresPorPeriodo } = get()
+    if (actual === periodo) return
+
+    const borradores = { ...borradoresPorPeriodo }
+    if (actual !== null) borradores[actual] = seccionesManuales
+    const recuperado = borradores[periodo] ?? []
+    delete borradores[periodo]
+
+    set({
+      periodo,
+      borradoresPorPeriodo: borradores,
+      seccionesManuales: recuperado,
+      seccionesFijas: new Map(),
+      conflictos: [],
+      isValidando: false,
+      errorValidacion: null,
+    })
+    get().validar()
+  },
+
   cargarSeccionesFijas: async (nrcs: string[]) => {
+    const periodo = get().periodo
+    if (periodo === null) return
+
     const resultados = await Promise.allSettled(
-      nrcs.map((nrc) => horariosService.obtenerPorNrc(nrc))
+      nrcs.map((nrc) => horariosService.obtenerPorNrc(nrc, periodo))
     )
+    // El estudiante cambió de ciclo mientras se resolvían: descartar.
+    if (get().periodo !== periodo) return
 
     const secciones: Seccion[] = []
     resultados.forEach((r) => {
@@ -92,9 +130,10 @@ export const useHorarioStore = create<HorarioState>((set, get) => ({
   },
 
   validar: async () => {
+    const { periodo } = get()
     const nrcs = get().todosLosNrcs()
 
-    if (nrcs.length === 0) {
+    if (periodo === null || nrcs.length === 0) {
       set({ conflictos: [], isValidando: false, errorValidacion: null })
       return
     }
@@ -102,12 +141,14 @@ export const useHorarioStore = create<HorarioState>((set, get) => ({
     set({ isValidando: true, errorValidacion: null })
 
     try {
-      const response = await horariosService.validar(nrcs)
+      const response = await horariosService.validar(nrcs, periodo)
+      if (get().periodo !== periodo) return
       set({
         conflictos: response.tieneConflictos ? response.conflictos : [],
         isValidando: false,
       })
     } catch (err) {
+      if (get().periodo !== periodo) return
       set({
         conflictos: [],
         isValidando: false,
@@ -119,6 +160,8 @@ export const useHorarioStore = create<HorarioState>((set, get) => ({
 
   reset: () =>
     set({
+      periodo: null,
+      borradoresPorPeriodo: {},
       seccionesFijas: new Map(),
       seccionesManuales: [],
       conflictos: [],

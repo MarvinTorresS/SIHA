@@ -128,13 +128,16 @@ describe("POST /api/estudiantes/:carnet/matricula", () => {
     });
 
     // Un curso de isi que además tenga sección ofertada en el período
-    // activo -- si no existe ninguno, el fixture de datos cambió y el
-    // test debe fallar ruidosamente, no saltarse en silencio.
+    // activo y NO tenga prerrequisitos -- el estudiante de prueba no tiene
+    // historial, y confirmarMatricula rechaza cursos bloqueados. Si no
+    // existe ninguno, el fixture de datos cambió y el test debe fallar
+    // ruidosamente, no saltarse en silencio.
     const cc = await prisma.curso_carrera.findFirstOrThrow({
       where: {
         id_carrera: carreraIsi.id_carrera,
         curso: {
           seccion: { some: { id_periodo: periodoActivo.id_periodo } },
+          requisitosDe: { none: { tipo: "prerequisito" } },
         },
       },
       include: {

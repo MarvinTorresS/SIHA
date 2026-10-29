@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react"
 import { resolverArea, codigoVisible } from "@/lib/curso-area"
+import { nombrePeriodoSiDistinto } from "@/lib/periodo"
 import { Header } from "@/components/layout/Header"
 import { EstadoBadge, ESTADOS_CURSO } from "@/components/shared/EstadoBadge"
 import { useAuthStore } from "@/store/authStore"
@@ -66,6 +67,9 @@ import type { MallaCurso } from "@/types/malla"
 
 interface CursoCardProps {
   curso: CursoConProgreso
+  /** Código del ciclo en curso: si el curso está cursando en OTRO ciclo,
+   * la card lo indica ("Cursando en <ciclo>"). */
+  codigoPeriodoPredeterminado: string | undefined
   onToggleAprobado: (codigo: string, actualmenteAprobado: boolean) => void
   onOpenSlotSheet: (codigo: string) => void
   onDesasignarSlot: (codigo: string) => void
@@ -83,6 +87,7 @@ interface CursoCardProps {
 
 function CursoCard({
   curso,
+  codigoPeriodoPredeterminado,
   onToggleAprobado,
   onOpenSlotSheet,
   onDesasignarSlot,
@@ -98,6 +103,7 @@ function CursoCard({
   desasignando,
 }: CursoCardProps) {
   const area = resolverArea(curso.codigo)
+  const otroPeriodo = nombrePeriodoSiDistinto(curso.periodoCursando, codigoPeriodoPredeterminado)
   const cambioPendiente = marcando || desmarcando || desasignando
   const aprobado = curso.estado === "aprobado"
   // Slot genérico OPT{n} dentro de su ciclo real (ej. "Cuarto Año - I
@@ -302,6 +308,11 @@ function CursoCard({
             {curso.cursoRealCodigo && (
               <p className="text-xs text-muted-foreground leading-tight pl-1">
                 {curso.cursoRealNombre}
+              </p>
+            )}
+            {otroPeriodo && (
+              <p className="text-xs text-muted-foreground leading-tight pl-1">
+                Cursando en {otroPeriodo}
               </p>
             )}
 
@@ -1131,6 +1142,7 @@ export function MallaPage() {
                           <CursoCard
                             key={curso.idCurso}
                             curso={curso}
+                            codigoPeriodoPredeterminado={progreso.periodoPredeterminado.codigo}
                             onToggleAprobado={handleToggleAprobado}
                             onOpenSlotSheet={setSlotAbierto}
                             onDesasignarSlot={desasignarSlotMutation.mutate}

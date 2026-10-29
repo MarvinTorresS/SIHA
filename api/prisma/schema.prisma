@@ -70,7 +70,7 @@ model periodo {
   nombre          String            @db.VarChar(50)
   anio            Int               @db.SmallInt
   ciclo           Int               @db.SmallInt
-  activo          Boolean           @default(true)
+  activo          Boolean           @default(false)
   creado_en       DateTime          @default(now()) @db.Timestamptz(6)
   historial_curso historial_curso[]
   seccion         seccion[]

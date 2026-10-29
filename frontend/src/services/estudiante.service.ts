@@ -1,4 +1,5 @@
 import { api } from "./api"
+import { periodoQuery } from "./periodos.service"
 import type { MallaProgresoResponse } from "@/types/estudiante"
 import type { CursoOferta } from "@/types/oferta"
 import type { OpcionesSlotResponse, SeleccionCursoReal } from "@/types/mallaSlot"
@@ -11,12 +12,12 @@ export const estudianteService = {
     )
   },
   /**
-   * GET /api/estudiantes/{carnet}/oferta -- oferta de cursos del período
-   * activo para la carrera propia, con estado ya resuelto (aprobado /
+   * GET /api/estudiantes/{carnet}/oferta?periodo= -- oferta de cursos del
+   * período para la carrera propia, con estado ya resuelto (aprobado /
    * cursando / elegible / bloqueado).
    */
-  obtenerOferta(carnet: string) {
-    return api.get<CursoOferta[]>(`/estudiantes/${carnet}/oferta`)
+  obtenerOferta(carnet: string, periodo: string) {
+    return api.get<CursoOferta[]>(`/estudiantes/${carnet}/oferta${periodoQuery(periodo)}`)
   },
   /** POST /api/estudiantes/{carnet}/historial -- marca un curso como aprobado. */
   marcarAprobado(carnet: string, codigoCurso: string) {
@@ -30,8 +31,8 @@ export const estudianteService = {
    * POST /api/estudiantes/{carnet}/matricula -- confirma el borrador de
    * Mis Cursos: cada NRC pasa su curso a "cursando" en el historial.
    */
-  confirmarMatricula(carnet: string, nrcs: string[]) {
-    return api.post<void>(`/estudiantes/${carnet}/matricula`, { nrcs })
+  confirmarMatricula(carnet: string, nrcs: string[], periodo: string) {
+    return api.post<void>(`/estudiantes/${carnet}/matricula${periodoQuery(periodo)}`, { nrcs })
   },
   /**
    * DELETE /api/estudiantes/{carnet}/historial/{codigoCurso} -- mismo

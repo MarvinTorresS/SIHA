@@ -510,30 +510,39 @@ def _upsert_section(cur, sec: dict, period_id: int) -> int:
     return cur.fetchone()[0]
 
 
-def _insert_schedule(cur, section_id: int, sec: dict) -> None:
+def _replace_schedule(cur, section_id: int, sec: dict) -> None:
     """
-    Inserta los bloques horarios de la sección. Deduplica en memoria
-    dentro de la corrida; los bloques ya existentes se dejan como están
-    (ON CONFLICT DO NOTHING).
+    Reemplaza los bloques horarios de la sección por los de esta corrida
+    (DELETE + INSERT dentro de la transacción del período). Antes era
+    ON CONFLICT DO NOTHING sin borrar nunca: si Banner cambiaba un
+    horario, el bloque viejo quedaba para siempre junto al nuevo.
+
+    Si Banner trajo la sección sin horarios utilizables, NO se borran los
+    existentes (puede ser un hueco transitorio de Banner) + WARNING.
     """
+    blocks = []
     seen = set()
     for h in sec.get("schedules", []):
         start_time = _parse_time(h.get("start"))
         end_time = _parse_time(h.get("end"))
         if not (start_time and end_time):
             continue
-        key = (h.get("day", ""), start_time, end_time, h.get("classroom", ""))
-        if key in seen:
+        key = (h.get("day", ""), start_time, end_time)
+        if key in seen:  # uq_horario_bloque: (id_seccion, dia, hora_inicio, hora_fin)
             continue
         seen.add(key)
-        cur.execute(
-            """
-            INSERT INTO horario_bloque (id_seccion, dia, hora_inicio, hora_fin, aula)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
-            """,
-            (section_id, *key),
-        )
+        blocks.append((section_id, key[0], start_time, end_time, h.get("classroom", "")))
+
+    if not blocks:
+        log.warning(f"  ⚠ NRC {sec['crn']}: sin horarios en Banner, se conservan los bloques existentes")
+        return
+
+    cur.execute("DELETE FROM horario_bloque WHERE id_seccion = %s", (section_id,))
+    execute_values(
+        cur,
+        "INSERT INTO horario_bloque (id_seccion, dia, hora_inicio, hora_fin, aula) VALUES %s",
+        blocks,
+    )
 
 
 def _mark_exhausted(cur, period_id: int, vigentes: set[str]) -> int:
@@ -572,7 +581,7 @@ def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, d
 
             for sec in sections:
                 section_id = _upsert_section(cur, sec, period_id)
-                _insert_schedule(cur, section_id, sec)
+                _replace_schedule(cur, section_id, sec)
                 pstats.loaded += 1
                 vigentes.add(sec["crn"])
             log.info(f"  {term}/{program}: {pstats.loaded} secciones cargadas")

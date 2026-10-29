@@ -115,3 +115,7 @@ DB_PORT = int(os.getenv("DATABASE_PORT", "5432"))
 DB_NAME = os.getenv("DATABASE_NAME", "sistema_horarios")
 DB_USER = os.getenv("DATABASE_USER", "horarios")
 DB_PASSWORD = os.getenv("DATABASE_PASSWORD", "horarios_dev")
+
+# Timeout corto para el chequeo de conexión inicial de run_etl.py: si la BD
+# no responde, abortar en segundos ANTES de pegarle a Banner.
+DB_CONNECT_TIMEOUT_SECONDS = 10

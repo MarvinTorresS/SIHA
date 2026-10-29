@@ -3,6 +3,8 @@
 # en .github/workflows/etl.yml, todo el año).
 #
 # Flujo:
+#   0. Chequeo de conexión a la BD (SELECT 1, timeout corto). Si falla se
+#      aborta ANTES de pegarle a Banner, con host/puerto/error en el log.
 #   1. Malla: populate_db carga carreras/cursos/prerrequisitos desde
 #      syllabi_normalized.json. Una sola vez.
 #   2. Descubrimiento de períodos (extractors/terms.py): candidatos
@@ -19,14 +21,16 @@
 #
 # Uso:
 #   python run_etl.py              corrida completa
+#   python run_etl.py --check-db   solo verifica la conexión y lista periodos
 #   CICLOS=202620 python run_etl.py   fuerza períodos (respeta View Only)
 
+import argparse
 import logging
 import os
 import sys
 from datetime import date
 
-from config import CICLOS_OVERRIDE_ENV, LOGS_DIR
+from config import CICLOS_OVERRIDE_ENV, LOGS_DIR, DB_HOST, DB_PORT
 from extractors import banner_connector, populate_db
 from extractors.terms import discover_terms, parse_override
 
@@ -41,15 +45,32 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def check_db() -> list[tuple[str, bool]] | None:
+    """Paso 0. Devuelve los períodos, o None si la BD no responde."""
+    log.info(f"▶ Chequeo de conexión a PostgreSQL ({DB_HOST}:{DB_PORT})")
+    try:
+        periodos = populate_db.check_db_connection()
+    except populate_db.DatabaseUnavailableError as e:
+        log.error(f"✗ {e}")
+        log.error("✗ ETL abortado antes de consultar Banner")
+        return None
+    log.info(f"  ✓ Conexión OK -- {len(periodos)} períodos en la BD:")
+    for codigo, activo in periodos:
+        log.info(f"    {codigo}  activo={activo}")
+    return periodos
+
+
 def run(today: date) -> int:
+    periodos = check_db()
+    if periodos is None:
+        return 2
+
     override = parse_override(os.getenv(CICLOS_OVERRIDE_ENV))
+    active_in_db = [codigo for codigo, activo in periodos if activo]
 
     log.info("▶ Paso 1: malla (populate_db)")
     conn = populate_db._connect()
     conn.autocommit = False
-    with conn.cursor() as cur:
-        cur.execute("SELECT codigo FROM periodo WHERE activo")
-        active_in_db = [row[0] for row in cur.fetchall()]
     failed_terms: list[str] = []
     try:
         career_map = populate_db.load_catalog_and_syllabus(conn)
@@ -95,6 +116,15 @@ def run(today: date) -> int:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="ETL Banner + Malla de SIHA")
+    parser.add_argument(
+        "--check-db", action="store_true",
+        help="solo verifica la conexión a la BD y lista los períodos",
+    )
+    args = parser.parse_args()
+
+    if args.check_db:
+        return 0 if check_db() is not None else 2
     return run(date.today())
 
 

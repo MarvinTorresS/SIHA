@@ -48,7 +48,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import (
-    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD,
+    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_CONNECT_TIMEOUT_SECONDS,
     OUTPUT_NORMALIZED_DIR, OUTPUT_RAW_DIR, LOGS_DIR,
 )
 from extractors.terms import (
@@ -69,11 +69,39 @@ log = logging.getLogger(__name__)
 
 # ── Conexión ──────────────────────────────────────────────────────────────────
 
-def _connect():
+def _connect(connect_timeout: int | None = None):
     return psycopg2.connect(
         host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
         user=DB_USER, password=DB_PASSWORD,
+        connect_timeout=connect_timeout,
     )
+
+
+class DatabaseUnavailableError(RuntimeError):
+    """La BD no respondió al chequeo inicial de run_etl.py."""
+
+
+def check_db_connection(timeout: int = DB_CONNECT_TIMEOUT_SECONDS) -> list[tuple[str, bool]]:
+    """
+    SELECT 1 con timeout corto; devuelve [(codigo, activo)] de periodo.
+    Lanza DatabaseUnavailableError con host, puerto y el error real si no
+    conecta -- run_etl.py lo corre ANTES de pegarle a Banner.
+    """
+    try:
+        conn = _connect(connect_timeout=timeout)
+    except psycopg2.Error as e:
+        raise DatabaseUnavailableError(
+            f"No se pudo conectar a PostgreSQL en {DB_HOST}:{DB_PORT} "
+            f"(base '{DB_NAME}', usuario '{DB_USER}', timeout {timeout}s): "
+            f"{str(e).strip()}"
+        ) from e
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.execute("SELECT codigo, activo FROM periodo ORDER BY codigo")
+            return [(row[0], row[1]) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

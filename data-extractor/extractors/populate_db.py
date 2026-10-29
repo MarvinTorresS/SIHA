@@ -2,23 +2,20 @@
 """
 Pipeline de poblamiento PostgreSQL — Sprint 3
 =============================================
-Flujo:
-  1. INSERT catálogos (carrera, periodo)
-  2. INSERT cursos desde syllabi_normalized.json (malla)
-  3. INSERT prerrequisitos (desde la malla)
-  3b. INSERT correquisitos (misma tabla prerrequisito, tipo='correquisito')
-  3c. INSERT prerequisitos de rango de ciclos (tabla prerequisito_ciclo, V5)
-  4. INSERT secciones desde banner_*.json (Banner)
-  5. INSERT profesores (desde secciones de Banner)
-  6. INSERT horario_bloque (desde secciones de Banner)
-  7. INSERT cursos de generales desde Banner (automático — no están en la malla)
-  8. MERGE: UPDATE seccion.curso_id = curso.id_curso
-     JOIN por codigo_curso_banner = curso.codigo
-     Prioriza el match con la carrera indicada por banner_program.
-  9. REPORTE: tasa de join, huérfanos, créditos en 0
+Flujo (multi-período, orquestado por run_etl.py):
+  A. Una vez por corrida -- load_catalog_and_syllabus():
+     carreras, cursos de la malla, prerrequisitos, correquisitos y
+     prerequisitos de rango de ciclos (syllabi_normalized.json).
+  B. Por cada período, en su propia transacción -- load_term():
+     periodo (nace activo=false), secciones + profesores + horarios desde
+     Banner, marca 'agotada' por (período, carrera), cursos de generales
+     y MERGE seccion.id_curso.
+  C. Una vez al final -- apply_active_rule(): periodo.activo según la regla
+     única de extractors/terms.decide_active.
+  D. Reporte de calidad.
 
-Ejecución:
-  python -m extractors.populate_db
+Ejecución standalone (sin pegarle a Banner, desde los banner_*.json ya
+extraídos): python -m extractors.populate_db
 
 Nota de diseño (créditos):
   Se verificó contra los datos reales de Campus Coto que ningún curso ni
@@ -38,6 +35,8 @@ Nota de diseño (créditos):
 
 import json
 import logging
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import date
 from collections import defaultdict
@@ -51,7 +50,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD,
     OUTPUT_NORMALIZED_DIR, OUTPUT_RAW_DIR, LOGS_DIR,
-    CICLO_ACTIVO,
+)
+from extractors.terms import (
+    PeriodState, TermStatus, decide_active, describe_term,
 )
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -140,20 +141,24 @@ def _insert_careers(conn) -> dict[str, int]:
         return {row[0]: row[1] for row in cur.fetchall()}
 
 
-def _insert_term(conn, code: str, name: str) -> int:
-    """Inserta o actualiza el periodo y retorna id_periodo."""
-    year = int(code[:4])
-    term_number = int(code[4])
-
+def _insert_term(conn, code: str) -> int:
+    """
+    Inserta o actualiza el periodo y retorna id_periodo. Año, ciclo y
+    nombre salen de describe_term (sufijo desconocido = error explícito).
+    Un período nuevo nace activo=false: solo apply_active_rule lo activa,
+    con la regla única del ETL. En conflicto se actualiza el nombre, nunca
+    activo (eso también es solo de apply_active_rule).
+    """
+    year, cycle, name = describe_term(code)
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO periodo (codigo, nombre, anio, ciclo)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO periodo (codigo, nombre, anio, ciclo, activo)
+            VALUES (%s, %s, %s, %s, false)
             ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre
             RETURNING id_periodo
             """,
-            (code, name, year, term_number),
+            (code, name, year, cycle),
         )
         return cur.fetchone()[0]
 
@@ -408,151 +413,149 @@ def _insert_cycle_range_prerequisites(conn, course_map: dict[str, int]):
 # PASO 4-6: Secciones, profesores y horarios desde Banner
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _insert_sections_from_banner(conn, period_id: int, career_map: dict[str, int]) -> dict[str, list[int]]:
+@dataclass
+class ProgramLoadStats:
+    """Resultado de cargar una carrera de un período."""
+    loaded: int = 0
+
+
+@dataclass
+class TermLoadStats:
+    term: str
+    by_program: dict[str, ProgramLoadStats] = field(default_factory=dict)
+    marked_exhausted: int = 0
+
+    @property
+    def total(self) -> int:
+        return sum(p.loaded for p in self.by_program.values())
+
+
+def _upsert_teacher(cur, sec: dict) -> int | None:
+    teacher_name = (sec.get("instructor") or "").strip()
+    if not teacher_name:
+        return None
+    cur.execute(
+        """
+        INSERT INTO profesor (nombre, correo)
+        VALUES (%s, %s)
+        ON CONFLICT (nombre) DO UPDATE SET correo = COALESCE(EXCLUDED.correo, profesor.correo)
+        RETURNING id_profesor
+        """,
+        (teacher_name, sec.get("instructor_email") or None),
+    )
+    return cur.fetchone()[0]
+
+
+def _upsert_section(cur, sec: dict, period_id: int) -> int:
     """
-    Inserta secciones, profesores y horarios desde los archivos banner_*.json.
-    Retorna {codigo_curso_banner: [id_seccion, ...]} para el MERGE.
-
-    Los archivos banner_*.json usan campos en inglés (crn, course, title, etc.)
-    desde la actualización del banner_connector (jul/2026).
+    Upsert de una sección por (nrc, id_periodo). En conflicto se refrescan
+    profesor, cupos y metadata.
     """
-    # Antes hardcodeado a "banner_*_202620.json" -- ahora usa CICLO_ACTIVO de
-    # config.py. El bug real que esto evita: si CICLO_ACTIVO se actualiza para
-    # un ciclo nuevo pero este glob se queda con el valor viejo (o viceversa),
-    # esta función no encuentra ningún archivo, no inserta nada, y el ETL
-    # automatizado (cron diario) "corre" todos los días sin cargar ni un solo
-    # curso nuevo -- sin error visible, solo un warning en el log.
-    patron = f"banner_*_{CICLO_ACTIVO}.json"
-    files = list(OUTPUT_RAW_DIR.glob(patron))
-    if not files:
-        log.warning(f"  ⚠ No se encontraron archivos {patron}")
-        return {}
+    nrc = sec["crn"]
+    cur.execute(
+        """
+        INSERT INTO seccion (nrc, codigo_curso_banner, id_periodo, id_profesor,
+                             numero_seccion, titulo, tipo, campus,
+                             creditos,
+                             capacidad, inscritos, disponibles, estado_oferta,
+                             es_general, fecha_inicio, fecha_fin, metadata)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'activa', %s, %s, %s, %s)
+        ON CONFLICT (nrc, id_periodo) DO UPDATE SET
+            id_profesor = EXCLUDED.id_profesor,
+            capacidad = EXCLUDED.capacidad,
+            inscritos = EXCLUDED.inscritos,
+            disponibles = EXCLUDED.disponibles,
+            estado_oferta = 'activa',
+            metadata = EXCLUDED.metadata,
+            actualizado_en = now()
+        RETURNING id_seccion
+        """,
+        (
+            nrc, sec["course"], period_id, _upsert_teacher(cur, sec),
+            sec.get("section", ""), sec.get("title", ""),
+            sec.get("type", ""), sec.get("campus", ""),
+            _parse_credits(sec.get("credits", 0)),
+            sec.get("capacity", 0), sec.get("enrolled", 0),
+            sec.get("available", 0),
+            sec.get("is_general", False),
+            _parse_date(sec.get("start_date")),
+            _parse_date(sec.get("end_date")),
+            json.dumps(sec.get("metadata") or {}),
+        ),
+    )
+    return cur.fetchone()[0]
 
-    all_sections = []
-    for file in files:
-        with open(file, encoding="utf-8") as f:
-            all_sections.extend(json.load(f))
 
-    log.info(f"  Secciones cargadas: {len(all_sections)}")
-
-    sections_by_code = defaultdict(list)
-
-    with conn.cursor() as cur:
-        for sec in all_sections:
-            # ── Profesor ──────────────────────────────────────────────────
-            teacher_id = None
-            teacher_name = (sec.get("instructor") or "").strip()
-            teacher_email = sec.get("instructor_email") or None
-            if teacher_name:
-                cur.execute(
-                    """
-                    INSERT INTO profesor (nombre, correo)
-                    VALUES (%s, %s)
-                    ON CONFLICT (nombre) DO UPDATE SET correo = COALESCE(EXCLUDED.correo, profesor.correo)
-                    RETURNING id_profesor
-                    """,
-                    (teacher_name, teacher_email),
-                )
-                teacher_id = cur.fetchone()[0]
-
-            # ── Créditos ──────────────────────────────────────────────────
-            credits = _parse_credits(sec.get("credits", 0))
-
-            # ── Fechas ────────────────────────────────────────────────────
-            start_date = _parse_date(sec.get("start_date"))
-            end_date = _parse_date(sec.get("end_date"))
-
-            # ── Metadata ──────────────────────────────────────────────────
-            metadata = sec.get("metadata") or {}
-
-            # ── Sección ───────────────────────────────────────────────────
-            cur.execute(
-                """
-                INSERT INTO seccion (nrc, codigo_curso_banner, id_periodo, id_profesor,
-                                     numero_seccion, titulo, tipo, campus,
-                                     creditos,
-                                     capacidad, inscritos, disponibles, estado_oferta,
-                                     es_general, fecha_inicio, fecha_fin, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'activa', %s, %s, %s, %s)
-                ON CONFLICT (nrc, id_periodo) DO UPDATE SET
-                    id_profesor = EXCLUDED.id_profesor,
-                    capacidad = EXCLUDED.capacidad,
-                    inscritos = EXCLUDED.inscritos,
-                    disponibles = EXCLUDED.disponibles,
-                    estado_oferta = 'activa',
-                    metadata = EXCLUDED.metadata,
-                    actualizado_en = now()
-                RETURNING id_seccion
-                """,
-                (
-                    sec["crn"], sec["course"], period_id, teacher_id,
-                    sec.get("section", ""), sec.get("title", ""),
-                    sec.get("type", ""), sec.get("campus", ""),
-                    credits,
-                    sec.get("capacity", 0), sec.get("enrolled", 0),
-                    sec.get("available", 0),
-                    sec.get("is_general", False),
-                    start_date, end_date,
-                    json.dumps(metadata),
-                ),
-            )
-            section_id = cur.fetchone()[0]
-            sections_by_code[sec["course"]].append(section_id)
-
-                       # ── Horarios ──────────────────────────────────────────────────
-            # Deduplicar en memoria antes de insertar. No podemos confiar en
-            # ON CONFLICT porque horario_bloque no tiene restricción UNIQUE
-            # sobre (id_seccion, dia, hora_inicio, hora_fin). Usamos un Set
-            # de tuplas para filtrar duplicados dentro de esta corrida.
-            seen_blocks = set()
-            for h in sec.get("schedules", []):
-                start_time = _parse_time(h.get("start"))
-                end_time = _parse_time(h.get("end"))
-                if start_time and end_time:
-                    day = h.get("day", "")
-                    classroom = h.get("classroom", "")
-                    key = (section_id, day, start_time, end_time, classroom)
-                    if key not in seen_blocks:
-                        seen_blocks.add(key)
-                        cur.execute(
-                            """
-                            INSERT INTO horario_bloque (id_seccion, dia, hora_inicio, hora_fin, aula)
-                            VALUES (%s, %s, %s, %s, %s)
-                            ON CONFLICT DO NOTHING
-                            """,
-                            (section_id, day, start_time, end_time, classroom),
-                        )
-
-    # Secciones que dejan de aparecer en Banner: NUNCA se borran (ver
-    # incidente documentado en V2__agregar_estado_oferta_seccion.sql --
-    # antes esto era un DELETE y llegó a acumular 17 secciones fantasma
-    # borradas de un tirón). En vez de eso, todo NRC que existía en la
-    # BD para este período pero no vino en el JSON de esta corrida se
-    # marca estado_oferta='agotada', sin tocar capacidad/inscritos/
-    # disponibles -- quedan en el último valor real conocido. Si el NRC
-    # vuelve a aparecer en una corrida futura, el upsert de arriba ya lo
-    # regresa a 'activa' con cupos frescos.
-    nrcs_vigentes = {sec["crn"] for sec in all_sections}
-    with conn.cursor() as cur:
+def _insert_schedule(cur, section_id: int, sec: dict) -> None:
+    """
+    Inserta los bloques horarios de la sección. Deduplica en memoria
+    dentro de la corrida; los bloques ya existentes se dejan como están
+    (ON CONFLICT DO NOTHING).
+    """
+    seen = set()
+    for h in sec.get("schedules", []):
+        start_time = _parse_time(h.get("start"))
+        end_time = _parse_time(h.get("end"))
+        if not (start_time and end_time):
+            continue
+        key = (h.get("day", ""), start_time, end_time, h.get("classroom", ""))
+        if key in seen:
+            continue
+        seen.add(key)
         cur.execute(
-            "SELECT nrc FROM seccion WHERE id_periodo = %s AND nrc <> ALL(%s)",
-            (period_id, list(nrcs_vigentes)),
+            """
+            INSERT INTO horario_bloque (id_seccion, dia, hora_inicio, hora_fin, aula)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (section_id, *key),
         )
-        nrcs_agotados = [row[0] for row in cur.fetchall()]
-        if nrcs_agotados:
-            cur.execute(
-                """
-                UPDATE seccion SET estado_oferta = 'agotada', actualizado_en = now()
-                WHERE id_periodo = %s AND nrc = ANY(%s)
-                """,
-                (period_id, nrcs_agotados),
-            )
-            log.info(
-                f"  ✓ {len(nrcs_agotados)} secciones marcadas estado_oferta='agotada' "
-                f"(ya no están en ningún banner_*.json): {', '.join(nrcs_agotados)}"
-            )
 
-    return dict(sections_by_code)
+
+def _mark_exhausted(cur, period_id: int, vigentes: set[str]) -> int:
+    """
+    Marca 'agotada' las secciones del período que esta corrida no trajo.
+    Acotado por id_periodo: el mismo NRC puede ser otra sección en otro
+    período. Nunca se borran (ver V2).
+    """
+    cur.execute(
+        """
+        UPDATE seccion SET estado_oferta = 'agotada', actualizado_en = now()
+        WHERE id_periodo = %s
+          AND estado_oferta <> 'agotada'
+          AND NOT (nrc = ANY(%s))
+        RETURNING nrc
+        """,
+        (period_id, list(vigentes)),
+    )
+    return len(cur.fetchall())
+
+
+def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, dict]) -> TermLoadStats:
+    """
+    Carga las secciones de un período, carrera por carrera.
+
+    extraction: {carrera: {"sections": [...], "failed_codes": [...]}}
+    (ver banner_connector.extract_term).
+    """
+    stats = TermLoadStats(term)
+    vigentes: set[str] = set()
+    with conn.cursor() as cur:
+        for program, data in extraction.items():
+            sections = data.get("sections") or []
+            pstats = ProgramLoadStats()
+            stats.by_program[program] = pstats
+
+            for sec in sections:
+                section_id = _upsert_section(cur, sec, period_id)
+                _insert_schedule(cur, section_id, sec)
+                pstats.loaded += 1
+                vigentes.add(sec["crn"])
+            log.info(f"  {term}/{program}: {pstats.loaded} secciones cargadas")
+
+        stats.marked_exhausted = _mark_exhausted(cur, period_id, vigentes)
+        log.info(f"  {term}: {stats.marked_exhausted} secciones marcadas 'agotada'")
+    return stats
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -668,7 +671,7 @@ def _merge_banner_syllabus(conn, course_map: dict[str, int], career_map: dict[st
 # PASO 10: Reporte de calidad
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _quality_report(conn):
+def quality_report(conn):
     """Genera reporte de calidad: tasa de join, huérfanos, créditos en 0."""
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("SELECT count(*) AS total FROM seccion")
@@ -708,7 +711,7 @@ def _quality_report(conn):
         program_stats = cur.fetchall()
 
         log.info(f"\n{'='*50}")
-        log.info(f"QUALITY REPORT — Sprint 3")
+        log.info("QUALITY REPORT")
         log.info(f"{'='*50}")
         log.info(f"  Total sections:        {total}")
         log.info(f"  Matched with syllabus: {matched} ({rate:.1f}%)")
@@ -731,7 +734,7 @@ def _quality_report(conn):
                 """
             )
             orphan_records = cur.fetchall()
-            path = Path("output/raw/orphaned_records.json")
+            path = OUTPUT_RAW_DIR / "orphaned_records.json"
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(orphan_records, f, ensure_ascii=False, indent=2, default=str)
             log.info(f"  Orphans saved to: {path}")
@@ -741,64 +744,109 @@ def _quality_report(conn):
 # Pipeline principal
 # ──────────────────────────────────────────────────────────────────────────────
 
+def load_catalog_and_syllabus(conn) -> dict[str, int]:
+    """Paso A: carreras + malla (una vez por corrida). Devuelve career_map."""
+    log.info("\n▶ Inserting catalogs...")
+    career_map = _insert_careers(conn)
+    log.info(f"  Careers: {list(career_map.keys())}")
+
+    log.info("\n▶ Inserting courses from syllabus...")
+    course_map = _insert_courses_from_syllabus(conn, career_map)
+    log.info(f"  Courses in DB: {len(course_map)}")
+
+    log.info("\n▶ Inserting prerequisites...")
+    _insert_prerequisites(conn, course_map, career_map)
+
+    log.info("\n▶ Inserting corequisites...")
+    _insert_corequisites(conn, course_map, career_map)
+
+    log.info("\n▶ Inserting cycle-range prerequisites...")
+    _insert_cycle_range_prerequisites(conn, course_map)
+    return career_map
+
+
+def load_term(conn, term: str, extraction: dict[str, dict], career_map: dict[str, int]) -> TermLoadStats:
+    """Paso B: un período completo. El llamador maneja commit/rollback."""
+    log.info(f"\n▶ Período {term}")
+    period_id = _insert_term(conn, term)
+    stats = _load_term_sections(conn, period_id, term, extraction)
+
+    _insert_general_courses_from_banner(conn)
+    with conn.cursor() as cur:
+        cur.execute("SELECT codigo, id_curso FROM curso")
+        course_map = {row[0]: row[1] for row in cur.fetchall()}
+    _merge_banner_syllabus(conn, course_map, career_map)
+    return stats
+
+
+def apply_active_rule(conn, statuses: list[TermStatus], today: date) -> list:
+    """
+    Paso C: aplica decide_active a los períodos evaluados en esta corrida
+    (candidatos ∪ activos en la BD) que existen en la tabla periodo. Uno
+    que Banner no tiene y nunca se cargó no se inserta solo para apagarlo.
+    """
+    view_only = {st.code: st.view_only for st in statuses}
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT p.codigo, p.activo, count(s.id_seccion), max(s.fecha_fin)
+            FROM periodo p
+            LEFT JOIN seccion s ON s.id_periodo = p.id_periodo
+            WHERE p.codigo = ANY(%s) OR p.activo
+            GROUP BY p.codigo, p.activo
+            """,
+            (list(view_only),),
+        )
+        states = [
+            PeriodState(code, active, view_only.get(code, False), count, max_end)
+            for code, active, count, max_end in cur.fetchall()
+        ]
+
+        decisions = decide_active(states, today)
+        for st, d in zip(states, decisions):
+            if d.warning:
+                log.warning(f"  ⚠ {d.warning}")
+            if d.active != st.active:
+                cur.execute("UPDATE periodo SET activo = %s WHERE codigo = %s", (d.active, d.code))
+            log.info(f"  {d.code}: activo={d.active} ({d.reason}"
+                     f"{', CAMBIA' if d.active != st.active else ''})")
+    return decisions
+
+
+def _read_term_files() -> dict[str, dict[str, dict]]:
+    """
+    {periodo: {carrera: {"sections": [...], "failed_codes": []}}} desde
+    output/raw/banner_{carrera}_{periodo}.json, para la ejecución standalone.
+    """
+    by_term: dict[str, dict[str, dict]] = defaultdict(dict)
+    for file in sorted(OUTPUT_RAW_DIR.glob("banner_*_*.json")):
+        m = re.fullmatch(r"banner_(\w+?)_(\d{6})\.json", file.name)
+        if not m:
+            continue
+        with open(file, encoding="utf-8") as f:
+            by_term[m.group(2)][m.group(1)] = {"sections": json.load(f), "failed_codes": []}
+    return dict(by_term)
+
+
 def run():
+    """
+    Standalone: carga la malla y todos los períodos que tengan
+    banner_*_{periodo}.json en output/raw, sin pegarle a Banner. No toca
+    periodo.activo (para eso hace falta getTerms: usar run_etl.py).
+    """
     log.info("=" * 60)
-    log.info("Sprint 3 — PostgreSQL Population")
+    log.info("PostgreSQL Population (standalone, desde banner_*.json)")
     log.info("=" * 60)
 
     conn = _connect()
     conn.autocommit = False
-
     try:
-        # 1. Catálogos
-        log.info("\n▶ Inserting catalogs...")
-        career_map = _insert_careers(conn)
-        log.info(f"  Careers: {list(career_map.keys())}")
-
-        period_id = _insert_term(conn, "202620", "Ciclo II 2026")
-        log.info(f"  Term: 202620 (id={period_id})")
-
-        # 2. Cursos desde la malla
-        log.info("\n▶ Inserting courses from syllabus...")
-        course_map = _insert_courses_from_syllabus(conn, career_map)
-        log.info(f"  Courses in DB: {len(course_map)}")
-
-        # 3. Prerrequisitos
-        log.info("\n▶ Inserting prerequisites...")
-        _insert_prerequisites(conn, course_map, career_map)
-
-        # 3b. Correquisitos (misma tabla, tipo='correquisito')
-        log.info("\n▶ Inserting corequisites...")
-        _insert_corequisites(conn, course_map, career_map)
-
-        # 3c. Prerequisitos de rango de ciclos (TGF425/TGF426, tabla V5)
-        log.info("\n▶ Inserting cycle-range prerequisites...")
-        _insert_cycle_range_prerequisites(conn, course_map)
-
-        # 4-6. Secciones desde Banner
-        log.info("\n▶ Inserting sections from Banner...")
-        _insert_sections_from_banner(conn, period_id, career_map)
-
-        # 7. Cursos de generales desde Banner (automático)
-        log.info("\n▶ Inserting general courses from Banner...")
-        _insert_general_courses_from_banner(conn)
-
-        # Re-cargar course_map para incluir los generales recién insertados
-        with conn.cursor() as cur:
-            cur.execute("SELECT codigo, id_curso FROM curso")
-            course_map = {row[0]: row[1] for row in cur.fetchall()}
-        log.info(f"  Total courses in DB: {len(course_map)}")
-
-        # 9. MERGE (ahora con prioridad de carrera via banner_program)
-        log.info("\n▶ Merging Banner ↔ Syllabus...")
-        _merge_banner_syllabus(conn, course_map, career_map)
-
-        # 10. Reporte
-        _quality_report(conn)
-
+        career_map = load_catalog_and_syllabus(conn)
+        for term, extraction in sorted(_read_term_files().items()):
+            load_term(conn, term, extraction, career_map)
+        quality_report(conn)
         conn.commit()
-        log.info(f"\n✓ Population completed and committed")
-
+        log.info("\n✓ Population completed and committed")
     except Exception as e:
         conn.rollback()
         log.error(f"✗ Error: {e}")

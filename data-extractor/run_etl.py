@@ -1,30 +1,34 @@
 # run_etl.py
-# Punto de entrada único del ETL, pensado para automatización (cron).
+# Punto de entrada único del ETL, pensado para automatización (cron diario
+# en .github/workflows/etl.yml, todo el año).
 #
-# Ejecuta banner_connector.run() + populate_db.run() en secuencia, pero solo
-# si debe_correr_etl() (ver config.py) da luz verde -- es decir, solo dentro
-# de los meses de matrícula activa (Enero/Julio/Noviembre). Disparado a
-# diario por .github/workflows/etl.yml; el guard es el que decide si la
-# corrida realmente hace algo o se salta sin tocar la base de datos.
+# Flujo:
+#   1. Malla: populate_db carga carreras/cursos/prerrequisitos desde
+#      syllabi_normalized.json. Una sola vez.
+#   2. Descubrimiento de períodos (extractors/terms.py): candidatos
+#      (año actual + siguiente) × {10, 20, 95} ∪ activos en la BD, probados
+#      contra Banner. Override manual: CICLOS=202620,202695.
+#   3. Por cada período a extraer: Banner -> carga, en SU transacción. Si un
+#      período falla se loggea, se sigue con los demás y el proceso termina
+#      con exit code != 0.
+#   4. Regla de periodo.activo (extractors/terms.decide_active).
 #
-# Uso manual: python run_etl.py (ejecutar desde data-extractor/, o desde
-# cualquier lado -- Python agrega el directorio de este script a sys.path
-# automáticamente, así que las importaciones de config/extractors resuelven
-# igual).
+# La protección que antes daba el guard de meses (no correr fuera de
+# matrícula) la da ahora la regla de 0 secciones: un Banner vacío o con
+# errores nunca marca secciones 'agotada' ni apaga un período.
 #
-# Prueba manual forzando el guard: FORZAR_ETL=true python run_etl.py
-# (o vía el input "forzar_guard" del workflow_dispatch en GitHub Actions).
-# Uso pensado SOLO para pruebas puntuales fuera de la ventana de matrícula --
-# corre contra la base de datos real (la que esté configurada en las
-# variables de entorno DATABASE_*), no es una simulación con datos falsos.
-# El disparador automático (cron diario) nunca pasa FORZAR_ETL=true.
+# Uso:
+#   python run_etl.py              corrida completa
+#   CICLOS=202620 python run_etl.py   fuerza períodos (respeta View Only)
 
 import logging
 import os
 import sys
+from datetime import date
 
-from config import debe_correr_etl, LOGS_DIR
+from config import CICLOS_OVERRIDE_ENV, LOGS_DIR
 from extractors import banner_connector, populate_db
+from extractors.terms import discover_terms, parse_override
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,29 +41,61 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def main() -> int:
-    forzado = os.getenv("FORZAR_ETL", "").strip().lower() == "true"
+def run(today: date) -> int:
+    override = parse_override(os.getenv(CICLOS_OVERRIDE_ENV))
 
-    if forzado:
-        debe_correr, razon = True, "forzado manualmente (FORZAR_ETL=true) -- ignora el guard de mes"
-        log.warning(f"⚠ Guard de ventana de matrícula OMITIDO — {razon}")
-    else:
-        debe_correr, razon = debe_correr_etl()
+    log.info("▶ Paso 1: malla (populate_db)")
+    conn = populate_db._connect()
+    conn.autocommit = False
+    with conn.cursor() as cur:
+        cur.execute("SELECT codigo FROM periodo WHERE activo")
+        active_in_db = [row[0] for row in cur.fetchall()]
+    failed_terms: list[str] = []
+    try:
+        career_map = populate_db.load_catalog_and_syllabus(conn)
+        conn.commit()
 
-    if not debe_correr:
-        log.info(f"ETL omitido — {razon}")
-        return 0
+        log.info(
+            "▶ Paso 2: descubrimiento de períodos"
+            + (f" (override {CICLOS_OVERRIDE_ENV}={','.join(override)})" if override else "")
+        )
+        statuses = discover_terms(today, active_in_db, override or None)
+        to_extract = [st.code for st in statuses if st.extract]
+        log.info(f"  Períodos a extraer: {', '.join(to_extract) or 'ninguno'}")
 
-    log.info(f"ETL habilitado — {razon}")
+        for term in to_extract:
+            log.info(f"▶ Paso 3: período {term}")
+            try:
+                extraction = banner_connector.extract_term(term)
+                stats = populate_db.load_term(conn, term, extraction, career_map)
+                conn.commit()
+                log.info(f"  ✓ {term}: {stats.total} secciones cargadas y confirmadas")
+            except Exception:
+                conn.rollback()
+                log.exception(f"  ✗ {term}: falló, se revierte solo este período")
+                failed_terms.append(term)
 
-    log.info("▶ Paso 1/2: banner_connector (scraping de secciones en Banner)")
-    banner_connector.run()
+        log.info("▶ Paso 4: regla de periodo.activo")
+        populate_db.apply_active_rule(conn, statuses, today)
+        conn.commit()
 
-    log.info("▶ Paso 2/2: populate_db (carga a PostgreSQL)")
-    populate_db.run()
+        populate_db.quality_report(conn)
+    except Exception:
+        conn.rollback()
+        log.exception("✗ ETL falló")
+        return 1
+    finally:
+        conn.close()
 
+    if failed_terms:
+        log.error(f"✗ ETL terminó con períodos fallidos: {', '.join(failed_terms)}")
+        return 1
     log.info("✓ ETL completado")
     return 0
+
+
+def main() -> int:
+    return run(date.today())
 
 
 if __name__ == "__main__":

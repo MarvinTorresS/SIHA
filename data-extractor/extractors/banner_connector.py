@@ -5,7 +5,7 @@
 #
 # Pasos por curso:
 #   1. GET term/termSelection → token
-#   2. POST term/search       → activar 202620
+#   2. POST term/search       → activar el período (ej. 202620)
 #   3. GET searchResults      → JSON completo (secciones + faculty + meetingsFaculty)
 #   4. POST getRestrictions   → HTML con restricciones de programa por sección (NRC)
 #
@@ -32,7 +32,7 @@ from config import (
     OUTPUT_RAW_DIR,
     LOGS_DIR,
     BANNER_PROGRAM_TO_CARRERA,
-    CICLO_ACTIVO,
+    CAMPUS_COTO_FILTER_TEXT,
 )
 
 logging.basicConfig(
@@ -46,10 +46,8 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 BANNER_BASE = "https://studentssb.una.ac.cr/StudentRegistrationSsb/ssb"
-# Antes hardcodeado acá ("202620") -- ahora lee de config.CICLO_ACTIVO, la
-# única fuente de verdad del ciclo activo (ver también populate_db.py, que
-# usa el mismo valor para encontrar los banner_*.json de esta corrida).
-TERM_CODE   = CICLO_ACTIVO
+# No hay período global: cada BannerSession se abre para un período
+# concreto (ver extractors/terms.py, que decide cuáles extraer).
 
 # Subjects por carrera
 # Los generales (EGF, EGC, EGS, EGA) se buscan con códigos fijos ya conocidos
@@ -279,14 +277,29 @@ def _extract_token(html: str) -> str:
 
 
 class BannerSession:
+    """Sesión efímera de Banner atada a UN período (term/search lo activa)."""
 
-    def __init__(self):
+    def __init__(self, term: str):
+        self.term = term
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         })
         self._token: Optional[str] = None
         self._uid:   Optional[str] = None
+
+    @property
+    def unique_id(self) -> str | None:
+        return self._uid
+
+    def ajax_headers(self) -> dict[str, str]:
+        """Cabeceras de las llamadas XHR de searchResults (token incluido)."""
+        return {
+            "x-synchronizer-token": self._token or "",
+            "x-requested-with":     "XMLHttpRequest",
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "referer": f"{BANNER_BASE}/courseSearch/courseSearch",
+        }
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
@@ -313,7 +326,7 @@ class BannerSession:
         self._request(
             "POST", f"{BANNER_BASE}/term/search?mode=courseSearch",
             data={
-                "term": TERM_CODE, "studyPath": "", "studyPathText": "",
+                "term": self.term, "studyPath": "", "studyPathText": "",
                 "startDatepicker": "", "endDatepicker": "",
                 "uniqueSessionId": self._uid,
             },
@@ -336,7 +349,7 @@ class BannerSession:
                     "GET", f"{BANNER_BASE}/searchResults/searchResults",
                     params={
                         "txt_subjectcoursecombo": code,
-                        "txt_term":      TERM_CODE,
+                        "txt_term":      self.term,
                         "pageOffset":    page_offset,
                         "pageMaxSize":   page_max_size,
                         "sortColumn":    "subjectDescription",
@@ -344,12 +357,7 @@ class BannerSession:
                         "uniqueSessionId": self._uid,
                         "_": int(time.time() * 1000),
                     },
-                    headers={
-                        "x-synchronizer-token": self._token,
-                        "x-requested-with":     "XMLHttpRequest",
-                        "accept": "application/json, text/javascript, */*; q=0.01",
-                        "referer": f"{BANNER_BASE}/courseSearch/courseSearch",
-                    },
+                    headers=self.ajax_headers(),
                 )
                 data = r.json()
                 if not data.get("success"):
@@ -373,7 +381,7 @@ class BannerSession:
         _parse_restrictions().
 
         Body confirmado por inspección de Network (04/jul/2026):
-            term=202620
+            term=<período de la sesión>
             courseReferenceNumber=<crn>
         Reutiliza la misma sesión/token que login()/search(); no requiere
         una sesión nueva.
@@ -381,7 +389,7 @@ class BannerSession:
         r = self._request(
             "POST", f"{BANNER_BASE}/searchResults/getRestrictions",
             data={
-                "term": TERM_CODE,
+                "term": self.term,
                 "courseReferenceNumber": crn,
             },
             headers={
@@ -420,7 +428,12 @@ def _load_syllabus_codes(force_reload: bool = False) -> dict[str, set[str]]:
     return _syllabus_codes_cache
 
 
-def extract_program(program: str, subjects: list[str]) -> list[dict]:
+def extract_program(program: str, subjects: list[str], term: str) -> tuple[list[dict], list[str]]:
+    """
+    Secciones Coto de una carrera en un período. Devuelve también los
+    códigos cuya consulta falló: con fallos, el resultado está incompleto
+    y populate_db NO debe marcar 'agotada' lo que falte de esa carrera.
+    """
     syllabus_codes = _load_syllabus_codes().get(program, set())
 
     # Separar subjects regulares de generales
@@ -437,10 +450,11 @@ def extract_program(program: str, subjects: list[str]) -> list[dict]:
     log.info(f"▶ {program}: {len(all_codes)} códigos ({len(codes)} malla + {len(general_codes)} generales)")
 
     results: list[dict] = []
+    failed_codes: list[str] = []
 
     for code in all_codes:
         try:
-            sess = BannerSession()
+            sess = BannerSession(term)
             sess.login()
 
             sections = sess.search(code)
@@ -456,7 +470,7 @@ def extract_program(program: str, subjects: list[str]) -> list[dict]:
                 continue
 
             # Filtrar solo Campus Coto
-            coto = [s for s in sections if "Campus Coto" in (s.get("campusDescription") or "")]
+            coto = [s for s in sections if CAMPUS_COTO_FILTER_TEXT in (s.get("campusDescription") or "")]
             if not coto:
                 sess.close()
                 continue
@@ -495,34 +509,48 @@ def extract_program(program: str, subjects: list[str]) -> list[dict]:
 
         except Exception as e:
             log.warning(f"  ⚠ {code}: {e}")
+            failed_codes.append(code)
 
-    log.info(f"  Total {program}: {len(results)} secciones\n")
-    return results
+    errores = f" ({len(failed_codes)} códigos con error)" if failed_codes else ""
+    log.info(f"  Total {program} {term}: {len(results)} secciones{errores}\n")
+    return results, failed_codes
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
-def run():
+def extract_term(term: str) -> dict[str, dict]:
+    """
+    Extrae todas las carreras de un período. Devuelve
+    {carrera: {"sections": [...], "failed_codes": [...]}} y deja cada
+    carrera en output/raw/banner_{carrera}_{periodo}.json -- SIEMPRE, aunque
+    venga vacía, para que un "0 secciones" quede explícito y no se confunda
+    con un archivo viejo de otra corrida.
+    """
     log.info("=" * 60)
-    log.info("Sprint 2 — Banner Connector (Campus Coto)")
+    log.info(f"Banner Connector (Campus Coto) — período {term}")
     log.info("=" * 60)
 
+    result: dict[str, dict] = {}
     total = 0
     for program, subjects in SUBJECTS_BY_PROGRAM.items():
-        sections = extract_program(program, subjects)
+        sections, failed_codes = extract_program(program, subjects, term)
+        result[program] = {"sections": sections, "failed_codes": failed_codes}
+        path = OUTPUT_RAW_DIR / f"banner_{program}_{term}.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(sections, f, ensure_ascii=False, indent=2)
         if sections:
-            path = OUTPUT_RAW_DIR / f"banner_{program}_{TERM_CODE}.json"
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(sections, f, ensure_ascii=False, indent=2)
             log.info(f"  ✓ {path} ({len(sections)} secciones)")
-            total += len(sections)
         else:
-            log.warning(f"  ⚠ {program}: sin secciones")
+            log.warning(f"  ⚠ {program} {term}: sin secciones")
+        total += len(sections)
 
-    log.info(f"\n✓ COMPLETADO — {total} secciones totales")
+    log.info(f"\n✓ {term} COMPLETADO — {total} secciones totales")
+    return result
 
 
 if __name__ == "__main__":
-    run()
+    if len(sys.argv) != 2:
+        sys.exit("Uso: python -m extractors.banner_connector <periodo>  (ej. 202620)")
+    extract_term(sys.argv[1])

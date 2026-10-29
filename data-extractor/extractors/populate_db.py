@@ -425,13 +425,14 @@ def _insert_cycle_range_prerequisites(conn, course_map: dict[str, int]):
 class ProgramLoadStats:
     """Resultado de cargar una carrera de un período."""
     loaded: int = 0
+    marked_exhausted: int = 0
+    skipped_exhausted_reason: str | None = None
 
 
 @dataclass
 class TermLoadStats:
     term: str
     by_program: dict[str, ProgramLoadStats] = field(default_factory=dict)
-    marked_exhausted: int = 0
 
     @property
     def total(self) -> int:
@@ -545,23 +546,33 @@ def _replace_schedule(cur, section_id: int, sec: dict) -> None:
     )
 
 
-def _mark_exhausted(cur, period_id: int, vigentes: set[str]) -> int:
+def _mark_exhausted(cur, period_id: int, program: str, vigentes: set[str]) -> int:
     """
-    Marca 'agotada' las secciones del período que esta corrida no trajo.
-    Acotado por id_periodo: el mismo NRC puede ser otra sección en otro
-    período. Nunca se borran (ver V2).
+    Marca 'agotada' las secciones de (período, carrera) que esta corrida no
+    trajo. Acotado por id_periodo Y banner_program: el mismo NRC puede ser
+    otra sección en otro período, y una carrera que falló o vino vacía no
+    debe arrastrar a las demás. Nunca se borran (ver V2).
     """
     cur.execute(
         """
         UPDATE seccion SET estado_oferta = 'agotada', actualizado_en = now()
         WHERE id_periodo = %s
+          AND metadata->>'banner_program' = %s
           AND estado_oferta <> 'agotada'
           AND NOT (nrc = ANY(%s))
         RETURNING nrc
         """,
-        (period_id, list(vigentes)),
+        (period_id, program, list(vigentes)),
     )
     return len(cur.fetchall())
+
+
+def _count_program_sections(cur, period_id: int, program: str) -> int:
+    cur.execute(
+        "SELECT count(*) FROM seccion WHERE id_periodo = %s AND metadata->>'banner_program' = %s",
+        (period_id, program),
+    )
+    return cur.fetchone()[0]
 
 
 def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, dict]) -> TermLoadStats:
@@ -570,12 +581,19 @@ def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, d
 
     extraction: {carrera: {"sections": [...], "failed_codes": [...]}}
     (ver banner_connector.extract_term).
+
+    Regla de 0 secciones (por carrera): si Banner trajo 0 secciones para una
+    carrera que en la BD SÍ tiene secciones de este período, no se marca
+    'agotada' nada de esa carrera + WARNING -- un Banner caído o vacío no
+    debe vaciar la oferta. Lo mismo si algún código de la carrera falló en
+    la extracción (resultado incompleto). periodo.activo tampoco cambia por
+    esto (ver decide_active).
     """
     stats = TermLoadStats(term)
-    vigentes: set[str] = set()
     with conn.cursor() as cur:
         for program, data in extraction.items():
             sections = data.get("sections") or []
+            failed = data.get("failed_codes") or []
             pstats = ProgramLoadStats()
             stats.by_program[program] = pstats
 
@@ -583,11 +601,25 @@ def _load_term_sections(conn, period_id: int, term: str, extraction: dict[str, d
                 section_id = _upsert_section(cur, sec, period_id)
                 _replace_schedule(cur, section_id, sec)
                 pstats.loaded += 1
-                vigentes.add(sec["crn"])
-            log.info(f"  {term}/{program}: {pstats.loaded} secciones cargadas")
 
-        stats.marked_exhausted = _mark_exhausted(cur, period_id, vigentes)
-        log.info(f"  {term}: {stats.marked_exhausted} secciones marcadas 'agotada'")
+            if failed:
+                pstats.skipped_exhausted_reason = f"{len(failed)} códigos fallaron: {', '.join(failed)}"
+            elif not sections and _count_program_sections(cur, period_id, program) > 0:
+                pstats.skipped_exhausted_reason = "Banner devolvió 0 secciones y la BD sí tiene"
+
+            if pstats.skipped_exhausted_reason:
+                log.warning(
+                    f"  ⚠ {term}/{program}: no se marca 'agotada' "
+                    f"({pstats.skipped_exhausted_reason})"
+                )
+            else:
+                pstats.marked_exhausted = _mark_exhausted(
+                    cur, period_id, program, {sec["crn"] for sec in sections}
+                )
+            log.info(
+                f"  {term}/{program}: {pstats.loaded} secciones cargadas, "
+                f"{pstats.marked_exhausted} marcadas 'agotada'"
+            )
     return stats
 
 
